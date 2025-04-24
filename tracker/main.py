@@ -33,6 +33,9 @@ while cap.isOpened():
     for track in tracks:
         x1, y1, x2, y2 = track.bbox
         track_id = track.track_id
+        cx = int((x1 + x2) / 2)
+        cy = int((y1 + y2) / 2)
+        center = (cx, cy)
         label = f"ID {track_id}"
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 100), 2)
         cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 100), 2)

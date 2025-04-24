@@ -25,22 +25,36 @@ class SimpleTracker:
         return inter_area / float(box1_area + box2_area - inter_area)
 
     def update(self, detections):
-        updated_tracks = []
-        for det in detections:
-            matched = False
+        assigned_tracks = set()
+        assigned_detections = set()
+
+        for i, det in enumerate(detections):
+            best_iou = self.iou_threshold
+            best_track = None
+
             for track in self.tracks:
-                if self.iou(det, track.bbox) > self.iou_threshold:
-                    track.bbox = det
-                    track.age = 0
-                    updated_tracks.append(track)
-                    matched = True
-                    break
-            if not matched:
+                if track in assigned_tracks:
+                    continue
+                iou_score = self.iou(det, track.bbox)
+                if iou_score > best_iou:
+                    best_iou = iou_score
+                    best_track = track
+
+            if best_track:
+                best_track.bbox = det
+                best_track.age = 0
+                assigned_tracks.add(best_track)
+                assigned_detections.add(i)
+
+        for i, det in enumerate(detections):
+            if i not in assigned_detections:
                 new_track = Track(det, self.next_id)
                 self.next_id += 1
-                updated_tracks.append(new_track)
-        # Aumentar edad y filtrar
-        for track in updated_tracks:
-            track.age += 1
-        self.tracks = [t for t in updated_tracks if t.age <= 5]
+                self.tracks.append(new_track)
+
+        for track in self.tracks:
+            if track not in assigned_tracks:
+                track.age += 1
+
+        self.tracks = [t for t in self.tracks if t.age <= 10]
         return self.tracks

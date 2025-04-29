@@ -3,7 +3,6 @@ import numpy as np
 from ultralytics import YOLO
 from track import SimpleTracker
 
-
 def should_process_frame (frame_index, video_fps, target_fps):
     if video_fps <= target_fps:
         return True

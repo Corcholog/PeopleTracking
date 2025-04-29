@@ -55,5 +55,5 @@ class SimpleTracker:
             if track not in assigned_tracks:
                 track.age += 1
 
-        self.tracks = [t for t in self.tracks if t.age <= 10]
+        self.tracks = [t for t in self.tracks if t.age <= 6]
         return self.tracks

@@ -10,6 +10,9 @@ def should_process_frame (frame_index, video_fps, target_fps):
     frame_interval = int(video_fps // target_fps)
     return frame_index % frame_interval == 0
 
+def test_retorno():
+    return True
+
 
 def main (video_path, target_fps=20):
     cap = cv2.VideoCapture(video_path)

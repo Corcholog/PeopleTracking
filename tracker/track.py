@@ -33,12 +33,11 @@ class SimpleTracker:
             best_track = None
 
             for track in self.tracks:
-                if track in assigned_tracks:
-                    continue
-                iou_score = self.iou(det, track.bbox)
-                if iou_score > best_iou:
-                    best_iou = iou_score
-                    best_track = track
+                if not(track in assigned_tracks):
+                    iou_score = self.iou(det, track.bbox)
+                    if iou_score > best_iou:
+                        best_iou = iou_score
+                        best_track = track
 
             if best_track:
                 best_track.bbox = det
@@ -56,5 +55,5 @@ class SimpleTracker:
             if track not in assigned_tracks:
                 track.age += 1
 
-        self.tracks = [t for t in self.tracks if t.age <= 10]
+        self.tracks = [t for t in self.tracks if t.age <= 6]
         return self.tracks

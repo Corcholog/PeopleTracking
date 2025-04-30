@@ -1,4 +1,4 @@
-import cv2, asyncio
+import cv2, asyncio, numpy as np
 from fastapi import FastAPI, WebSocket , WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from ultralytics import YOLO
@@ -78,3 +78,22 @@ async def ws_endpoint(ws: WebSocket):
         else:
             print("No se enviaron datos por WebSocket.")
         await ws.close(code=1000)  # código 1000 = "normal closure" :contentReference[oaicite:2]{index=2}
+
+@app.websocket("/ws/analyze")
+async def analyze(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            blob = await ws.receive_bytes()
+            # Offload de inferencia
+            loop = asyncio.get_running_loop()
+            res_list = await loop.run_in_executor(None, model.predict, cv2.imdecode(
+                np.frombuffer(blob, np.uint8), cv2.IMREAD_COLOR))
+            res = res_list[0]
+            annotated = res.plot()
+            _, buf = cv2.imencode(".jpg", annotated)
+            await ws.send_bytes(buf.tobytes())
+    except WebSocketDisconnect:
+        print("Cliente desconectado")
+    finally:
+        await ws.close()

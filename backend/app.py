@@ -1,6 +1,7 @@
 import cv2, asyncio, numpy as np
 from fastapi import FastAPI, WebSocket , WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from tracker.tracker import get_predict, draw
 from ultralytics import YOLO
 import time
 app = FastAPI()
@@ -10,11 +11,16 @@ HTML = """
 <!DOCTYPE html>
 <html>
   <body>
+    <video id="video" autoplay muted playsinline></video>
     <canvas id="canvas"></canvas>
+
     <script>
       const ws = new WebSocket("ws://localhost:8000/ws/track/");
+      const video = document.getElementById("video");
       const canvas = document.getElementById("canvas");
       const ctx = canvas.getContext("2d");
+
+      // Mostrar respuesta del backend
       ws.onmessage = evt => {
         const blob = new Blob([evt.data], { type: "image/jpeg" });
         const img = new Image();
@@ -25,6 +31,29 @@ HTML = """
         };
         img.src = URL.createObjectURL(blob);
       };
+
+      // Capturar cámara
+      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        video.srcObject = stream;
+
+        const sendFrame = () => {
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            const tempCanvas = document.createElement("canvas");
+            const tempCtx = tempCanvas.getContext("2d");
+            tempCanvas.width = video.videoWidth;
+            tempCanvas.height = video.videoHeight;
+            tempCtx.drawImage(video, 0, 0);
+            tempCanvas.toBlob(blob => {
+              if (blob && ws.readyState === WebSocket.OPEN) {
+                ws.send(blob);
+              }
+            }, "image/jpeg");
+          }
+          requestAnimationFrame(sendFrame);
+        };
+
+        sendFrame();
+      });
     </script>
   </body>
 </html>
@@ -37,49 +66,41 @@ async def index():
 @app.websocket("/ws/track/")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    send_times = []  # ← aquí creas la lista para medir overhead :contentReference[oaicite:0]{index=0}
-    cap = cv2.VideoCapture("video.mp4")
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    declared_fps  = cap.get(cv2.CAP_PROP_FPS)
-    print(f"📽 Total frames={total_frames}, FPS declarada={declared_fps}")
-
+    send_times = []
 
     try:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            loop = asyncio.get_running_loop()  # obtiene el event loop activo
-            res_list = await loop.run_in_executor(
-                None,           # usa el ThreadPoolExecutor por defecto
-                model.predict,  # función bloqueante
-                frame           # argumento
-            )
-            res = res_list[0]
-            annotated = res.plot()
-            _, buf = cv2.imencode(".jpg", annotated)
-
-            
+        while True:
             try:
-                t0 = time.perf_counter()
-                await ws.send_bytes(buf.tobytes())
-                delta_send = time.perf_counter() - t0
-                send_times.append(delta_send)
+                data = await ws.receive_bytes()
             except WebSocketDisconnect:
                 break
-        await asyncio.sleep(0)
+
+            # Decodificar la imagen recibida
+            nparr = np.frombuffer(data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None:
+                continue
+
+            # Procesar con YOLO + tracking
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, get_predict, frame)
+            frame_pred, tracks, _ = result
+            annotated = draw(frame_pred, tracks)
+
+            # Codificar imagen anotada a JPG para enviar
+            _, buf = cv2.imencode(".jpg", annotated)
+
+            t0 = asyncio.get_running_loop().time()
+            await ws.send_bytes(buf.tobytes())
+            send_times.append(asyncio.get_running_loop().time() - t0)
 
     finally:
-        cap.release()
-        # Cierra la conexión WebSocket de forma limpia:
         if send_times:
-            avg_send = sum(send_times) / len(send_times)
-            print(f"Send overhead medio: {avg_send*1000:.2f} ms")
-        else:
-            print("No se enviaron datos por WebSocket.")
-        await ws.close(code=1000)  # código 1000 = "normal closure" :contentReference[oaicite:2]{index=2}
+            avg = sum(send_times) / len(send_times)
+            print(f"Overhead promedio envío: {avg*1000:.2f} ms")
+        await ws.close(code=1000)
 
-@app.websocket("/ws/analyze")
+@app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     await ws.accept()
     try:

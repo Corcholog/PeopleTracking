@@ -41,7 +41,7 @@ export default function Home() {
   // 3. Inicializar WebSocket y enviar frames
   useEffect(() => {
     if (!videoRef.current) return;
-    wsRef.current = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze");
+    wsRef.current = new ReconnectingWebSocket("ws://localhost:8000/ws/track/");
     wsRef.current.binaryType = "arraybuffer";
 
     // Cuando llega un frame anotado del backend:

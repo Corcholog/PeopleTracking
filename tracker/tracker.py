@@ -1,6 +1,6 @@
 import cv2
 from ultralytics import YOLO
-from track import SimpleTracker
+from .track import SimpleTracker
 import logging
 
 # Desactivar la salida de logs de la librería ultralytics

@@ -149,6 +149,6 @@ def main (video_path, target_fps=None):
         print("No se procesó ningún frame.")
 
 
-video_path = r'tracker\park.mp4'
+video_path = r'tracker\shopp.mp4'
 
 main(video_path, 20)

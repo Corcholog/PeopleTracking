@@ -5,7 +5,7 @@ export default function WebSocketComponent() {
   const [messages, setMessages] = useState([]);
 
   useEffect(() => {
-    const socket = new ReconnectingWebSocket('ws://localhost:8000/ws/analyze');
+    const socket = new ReconnectingWebSocket('ws://localhost:8000/ws/analyze/');
 
     socket.onopen = () => {
       console.log('Conexión WebSocket establecida');

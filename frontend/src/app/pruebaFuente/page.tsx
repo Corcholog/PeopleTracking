@@ -25,23 +25,33 @@ export default function Home() {
   useEffect(() => {
     if (!selectedDevice) return;
     let stream;
-    navigator.mediaDevices.getUserMedia({
+  
+    const constraints = {
       video: { deviceId: { exact: selectedDevice } }
-    })
-    .then(s => {
-      stream = s;
-      videoRef.current.srcObject = s;
-    })
-    .catch(console.error);
+    };
+  
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        console.warn("Cámara exacta no encontrada, usando por defecto:", err);
+        // Fallback a la cámara por defecto
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        // Opcional: resetear la selección para que el select no siga apuntando a un ID inválido
+        setSelectedDevice("");
+      }
+      videoRef.current.srcObject = stream;
+    })();
+  
     return () => {
-      stream && stream.getTracks().forEach(t => t.stop());
+      stream && stream.getTracks().forEach((t) => t.stop());
     };
   }, [selectedDevice]);
 
   // 3. Inicializar WebSocket y enviar frames
   useEffect(() => {
     if (!videoRef.current) return;
-    wsRef.current = new ReconnectingWebSocket("ws://localhost:8000/ws/track/");
+    wsRef.current = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
     wsRef.current.binaryType = "arraybuffer";
 
     // Cuando llega un frame anotado del backend:

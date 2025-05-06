@@ -116,5 +116,3 @@ async def analyze(ws: WebSocket):
             await ws.send_bytes(buf.tobytes())
     except WebSocketDisconnect:
         print("Cliente desconectado")
-    finally:
-        await ws.close()

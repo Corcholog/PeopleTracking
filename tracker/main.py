@@ -5,6 +5,7 @@ from ultralytics import YOLO
 from track import SimpleTracker
 import time
 import logging
+import torch
 
 
 # Desactivar la salida de logs de la librería ultralytics
@@ -36,7 +37,20 @@ def should_process_frame (frame_index, video_fps, target_fps):
 
     
 
-def main (video_path, target_fps=None):
+def main (video_path, target_fps=None,use_gpu=False):
+
+
+    print("GPU disponible:", torch.cuda.is_available())
+    print("Nombre de GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No hay GPU")
+
+    if use_gpu and torch.cuda.is_available():
+        device = 'cuda'
+        print (f"se esta usando   {torch.cuda.get_device_name(0)}")
+    else:
+        device = "cpu"
+        print (f"se esta usando cpu")
+    
+
     cap = cv2.VideoCapture(video_path)
     video_fps = cap.get(cv2.CAP_PROP_FPS)
     if target_fps is None:
@@ -70,7 +84,7 @@ def main (video_path, target_fps=None):
             processed_frames += 1
             # --- Detección (YOLO) ---
             det_start = time.time()
-            results = model(frame)[0]
+            results = model.predict(frame, device=device, verbose=False)[0]
             detections = []
 
             for result in results.boxes:
@@ -151,4 +165,4 @@ def main (video_path, target_fps=None):
 
 video_path = r'tracker\shopp.mp4'
 
-main(video_path, 20)
+main(video_path, 20, use_gpu=True)

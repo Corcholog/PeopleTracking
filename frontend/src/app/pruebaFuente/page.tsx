@@ -1,15 +1,16 @@
 // pages/index.js
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReconnectingWebSocket from 'reconnecting-websocket';
 
 export default function Home() {
-  const [devices, setDevices] = useState([]);
-  const [selectedDevice, setSelectedDevice] = useState("");
-  const videoRef = useRef(null);
-  const rawCanvasRef = useRef(null); // <-- esta es la línea que faltaba
-  const annotatedCanvasRef = useRef(null);
-  const wsRef = useRef(null);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const rawCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const annotatedCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const wsRef = useRef<ReconnectingWebSocket | null>(null);
+
 
   // 1. Enumerar cámaras
   useEffect(() => {
@@ -24,7 +25,7 @@ export default function Home() {
   // 2. Abrir stream de la cámara
   useEffect(() => {
     if (!selectedDevice) return;
-    let stream;
+    let stream: MediaStream;
   
     const constraints = {
       video: { deviceId: { exact: selectedDevice } }
@@ -40,7 +41,9 @@ export default function Home() {
         // Opcional: resetear la selección para que el select no siga apuntando a un ID inválido
         setSelectedDevice("");
       }
-      videoRef.current.srcObject = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
     })();
   
     return () => {
@@ -61,9 +64,11 @@ export default function Home() {
       const img = new Image();
       img.onload = () => {
         const canvas = annotatedCanvasRef.current;
+        if (!canvas) return;
         canvas.width = img.width;
         canvas.height = img.height;
         const ctx = canvas.getContext("2d");
+        if (!ctx) return;
         ctx.drawImage(img, 0, 0);
         URL.revokeObjectURL(img.src);
       };
@@ -73,19 +78,21 @@ export default function Home() {
     const interval = setInterval(() => {
       const video = videoRef.current;
       const canvas = rawCanvasRef.current;
-      if (!(video && canvas && wsRef.current.readyState === WebSocket.OPEN)) return;
+      const ws = wsRef.current;
+      if (!video || !canvas || !ws || ws.readyState !== WebSocket.OPEN) return;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext("2d");
+      if (!ctx) return;
       ctx.drawImage(video, 0, 0);
       canvas.toBlob((blob) => {
-        blob && wsRef.current.send(blob);
+        blob && ws.send(blob);
       }, "image/jpeg", 0.7);
     }, 50);
 
     return () => {
       clearInterval(interval);
-      wsRef.current.close();
+      wsRef.current?.close();
     };
   }, [videoRef.current?.srcObject]);
 

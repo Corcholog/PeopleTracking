@@ -36,6 +36,7 @@ export default function DashboardPage() {
   };
 
   // Función para detener la cámara
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleStopCamera = () => {
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;

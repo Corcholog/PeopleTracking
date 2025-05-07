@@ -3,7 +3,7 @@
 node_modules/
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
+yarn-error.log*PeopleTracking_1.0.0_x64_en-US.msi
 .env
 dist/
 build/
@@ -32,3 +32,7 @@ __pycache__/
 tracker/venv/
 
 .venv/
+
+desktop/src-tauri/binaries/fastapi_server-x86_64-pc-windows-msvc.exe
+
+desktop/src-tauri/target/release/bundle/msi/PeopleTracking_1.0.0_x64_en-US.msi

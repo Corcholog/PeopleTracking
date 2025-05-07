@@ -1,0 +1,111 @@
+.main {
+  margin: 0;
+  padding: 20px;
+  font-family: Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+  background-image: linear-gradient(#383b4d, #985E6D);
+}
+
+.title{
+  font-weight: bold;
+  font-size: 20px;
+  color: #98878F;
+}
+
+.buttonGroup {
+  display: flex;
+  margin-bottom: 15px;
+  flex-wrap: wrap;
+  font-size: medium;
+  border: 1px solid #98878F;
+  border-radius: 5px;
+  background-color: #192231;
+  color: #98878F;
+}
+
+.buttonGroup button {
+  padding: 10px 20px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.buttonGroup button:not(:first-child) {
+  border-left: 2px solid #98878F;
+}
+
+.contentRow {
+  display: flex;
+  width: 100%;
+  height: 85%;
+  justify-content: center;
+  align-items: stretch;
+  gap: 20px; /* Espacio entre el video y la scrollbar */
+  margin-bottom: 15px;
+}
+
+.videoContainer {
+  flex: 1;
+  background-color: #98878F;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+}
+
+.videoElement {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.textVideoContainer {
+  color: #192231;
+}
+
+.zoomScrollContainer {
+  width: 150px; /* ancho fijo en el costado */
+  overflow-y: auto;
+  border: 3px solid #98878F;
+  padding: 5px;
+  background-color: #192231;
+  border-radius: 5px;
+}
+
+.zoomScrollContainer button {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+  text-align: center;
+  border: 1px solid #98878F;
+  border-radius: 5px;
+  padding: 7px;
+  color: #98878F;
+}
+
+.zoomScrollContainer::-webkit-scrollbar {
+  width: 15px; /* ancho del scrollbar vertical */
+}
+
+.zoomScrollContainer::-webkit-scrollbar-track {
+  background: #192231; /* color del fondo del track */
+  border-radius: 5px;
+}
+
+.zoomScrollContainer::-webkit-scrollbar-thumb {
+  background: #98878F; /* color del pulgar */
+  border-radius: 5px;
+}
+
+.zoomScrollContainer::-webkit-scrollbar-thumb:hover {
+  background: #7d6f77; /* color del pulgar al pasar el mouse */
+}
+
+.hidden {
+  display: none;
+}
+
+

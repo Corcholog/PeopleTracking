@@ -1,67 +1,21 @@
 import cv2, asyncio, numpy as np
 from fastapi import FastAPI, WebSocket , WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from tracker.tracker import get_predict, draw
 from ultralytics import YOLO
-import time
+from tracker.tracker import get_predict, draw
+import sys
+import os
+
 app = FastAPI()
-model = YOLO("yolov8n.pt")
 
-HTML = """
-<!DOCTYPE html>
-<html>
-  <body>
-    <video id="video" autoplay muted playsinline></video>
-    <canvas id="canvas"></canvas>
+# Detecta si está en un ejecutable de PyInstaller
+if getattr(sys, 'frozen', False):
+    bundle_dir = sys._MEIPASS
+else:
+    bundle_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-    <script>
-      const ws = new WebSocket("ws://localhost:8000/ws/track/");
-      const video = document.getElementById("video");
-      const canvas = document.getElementById("canvas");
-      const ctx = canvas.getContext("2d");
+# Añadí el path completo de "tracker" al sys.path
+sys.path.insert(0, os.path.join(bundle_dir, 'tracker'))
 
-      // Mostrar respuesta del backend
-      ws.onmessage = evt => {
-        const blob = new Blob([evt.data], { type: "image/jpeg" });
-        const img = new Image();
-        img.onload = () => {
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-        };
-        img.src = URL.createObjectURL(blob);
-      };
-
-      // Capturar cámara
-      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-        video.srcObject = stream;
-
-        const sendFrame = () => {
-          if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            const tempCanvas = document.createElement("canvas");
-            const tempCtx = tempCanvas.getContext("2d");
-            tempCanvas.width = video.videoWidth;
-            tempCanvas.height = video.videoHeight;
-            tempCtx.drawImage(video, 0, 0);
-            tempCanvas.toBlob(blob => {
-              if (blob && ws.readyState === WebSocket.OPEN) {
-                ws.send(blob);
-              }
-            }, "image/jpeg");
-          }
-          requestAnimationFrame(sendFrame);
-        };
-
-        sendFrame();
-      });
-    </script>
-  </body>
-</html>
-"""
-
-@app.get("/")
-async def index():
-    return HTMLResponse(HTML)
 
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):

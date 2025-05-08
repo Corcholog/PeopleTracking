@@ -6,6 +6,17 @@ import logging
 # Desactivar la salida de logs de la librería ultralytics
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
 
+#
+confidence_threshold = 0.5
+#con esta funcion se setea con la confianza que quiere el usuario
+def set_confidence(confidence):
+    global confidence_threshold  
+    confidence_threshold = confidence
+#con esta funcion se vuelve a setear la confianza por default si el usuario no quiere filtrar mas
+def set_default_confidence():
+    global confidence_threshold  
+    confidence_threshold = 0.5
+
 # Modelo y tracker
 model = YOLO("yolov8n.pt", verbose=False)
 tracker = SimpleTracker()
@@ -28,7 +39,7 @@ def get_predict(frame, id=None):
     for result in results.boxes:
         cls_id = int(result.cls[0])
         conf = float(result.conf[0])
-        if cls_id == 0 and conf > 0.5:
+        if cls_id == 0 and conf > confidence_threshold:
             x1, y1, x2, y2 = map(int, result.xyxy[0])
             cropped = frame[y1:y2, x1:x2]
             if cropped.size == 0:

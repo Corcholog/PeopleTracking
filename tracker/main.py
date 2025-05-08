@@ -35,7 +35,19 @@ def should_process_frame (frame_index, video_fps, target_fps):
 '''
 
 
-    
+'''
+para probar la confidence tambien lo pruebo aca ya esta en la clase tracker igual
+'''
+
+confidence_threshold = 0.5
+
+def set_confidence(confidence):
+    global confidence_threshold  
+    confidence_threshold = confidence
+
+def set_default_confidence():
+    global confidence_threshold  
+    confidence_threshold = 0.5
 
 def main (video_path, target_fps=None,use_gpu=False):
 
@@ -164,5 +176,9 @@ def main (video_path, target_fps=None,use_gpu=False):
 
 
 video_path = r'tracker\shopp.mp4'
-
+print(f"al inicio por default es{confidence_threshold}")
+set_confidence(0.7)
+print(f"seteada :  {confidence_threshold}")
+set_default_confidence()
+print(f"seteada default{confidence_threshold}")
 main(video_path, 20, use_gpu=True)

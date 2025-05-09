@@ -43,9 +43,6 @@ def should_process_frame (frame_index, video_fps, target_fps):
     return frame_index % frame_interval == 0
 '''
 
-def main(video_path, target_fps=None):
-    global zoom_target_id, clicked_point
-
 
 '''
 para probar la confidence tambien lo pruebo aca ya esta en la clase tracker igual
@@ -62,6 +59,10 @@ def set_default_confidence():
     confidence_threshold = 0.5
 
 def main (video_path, target_fps=None,use_gpu=False):
+
+    global zoom_target_id, clicked_point
+    '''margen inicial para el zoom'''
+    zoom_margin = 50
 
 
     print("GPU disponible:", torch.cuda.is_available())
@@ -149,7 +150,7 @@ def main (video_path, target_fps=None,use_gpu=False):
 
                 # Mostrar zoom si es la persona seleccionada
                 if track_id == zoom_target_id:
-                    margin = 50  # Margen extra alrededor de la persona
+                    margin = zoom_margin  # Margen extra alrededor de la persona
                     x1, y1, x2, y2 = track.bbox
 
                     # Esto es para expandir el área de zoom alrededor de la persona
@@ -190,6 +191,13 @@ def main (video_path, target_fps=None,use_gpu=False):
         elif key & 0xFF == ord("p"): # Cerrar el zoom
             zoom_target_id = None
             cv2.destroyWindow("Zoom a persona")
+        elif key & 0xFF == ord("+") or key == 43:  # "+" key
+            zoom_margin = min(200, zoom_margin - 10)
+            print(f"[INFO] Zoom aumentado: margen = {zoom_margin}")
+        elif key & 0xFF == ord("-") or key == 45:  # "-" key
+            zoom_margin = max(10, zoom_margin + 10)
+            print(f"[INFO] Zoom reducido: margen = {zoom_margin}")
+
 
     cap.release()
     cv2.destroyAllWindows()
@@ -206,7 +214,7 @@ def main (video_path, target_fps=None,use_gpu=False):
         print("No se procesó ningún frame.")
 
 
-video_path = r'tracker\shopp.mp4'
+video_path = 'shopp.mp4'
 print(f"al inicio por default es{confidence_threshold}")
 set_confidence(0.7)
 print(f"seteada :  {confidence_threshold}")

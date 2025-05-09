@@ -8,16 +8,18 @@ import torch
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
 device = 'cpu'
 
-def set_gpu_usage(use_gpu):
+def set_gpu_usage(use_gpu) -> bool:
     global device, model
     if use_gpu and torch.cuda.is_available():
         device = 'cuda'
         model.to(device)
         print(f"Se está usando {torch.cuda.get_device_name(0)}")
+        return True
     else:
         device = 'cpu'
         model.to(device)
         print("Se utilizará CPU, la GPU no está disponible o no es compatible.")
+        return False
 
 
 confidence_threshold = 0.5

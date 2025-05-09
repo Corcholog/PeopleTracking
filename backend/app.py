@@ -1,7 +1,7 @@
 import cv2, asyncio, numpy as np
-from fastapi import FastAPI, WebSocket , WebSocketDisconnect
+from fastapi import FastAPI, WebSocket , WebSocketDisconnect, Request
 from ultralytics import YOLO
-from tracker.tracker import get_predict, draw
+from tracker.tracker import get_predict, draw, reset
 import sys
 import os
 
@@ -41,3 +41,9 @@ async def analyze(ws: WebSocket):
             await ws.send_bytes(buf.tobytes())
     except WebSocketDisconnect:
         print("Cliente desconectado")
+
+@app.post("/reset_model/")
+async def reset_model(request: Request):
+    reset()
+    return {"status": "model reset"}
+

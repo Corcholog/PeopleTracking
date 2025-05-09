@@ -96,6 +96,7 @@ export default function DashboardPage() {
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      fetch("http://localhost:8000/reset_model/", { method: "POST" });
       const videoUrl = URL.createObjectURL(file);
       setVideoSrc(videoUrl);
       setIsCameraActive(false);
@@ -107,6 +108,7 @@ export default function DashboardPage() {
   };
 
   const handleStartCamera = () => {
+    fetch("http://localhost:8000/reset_model/", { method: "POST" });
     setVideoSrc(null);
     setIsCameraActive(true);
     setIsTracking(false);

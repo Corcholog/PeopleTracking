@@ -154,6 +154,31 @@ export default function DashboardPage() {
               ))}
             </div>
           </details>
+          <details className={styles.trackingDropdown}>
+            <summary> Configuración tracking</summary>
+            <div className={styles.optionsContainer}>
+              {/* Unidad de procesamiento */}
+              <div className={styles.trackingOption}>
+                <label>Unidad de procesamiento:</label><br></br>
+                <select defaultValue="cpu">
+                  <option value="cpu">CPU</option>
+                  <option value="gpu">GPU</option>
+                </select>
+              </div>
+
+              {/* FPS */}
+              <div className={styles.trackingOption}>
+                <label>FPS deseados:</label><br></br>
+                <input type="number" min="1" max="60" defaultValue="30"/>
+              </div>
+
+              {/* Porcentaje de confianza */}
+              <div className={styles.trackingOption}>
+                <label>Porcentaje de confianza (%):</label><br></br>
+                <input type="number" min="0" max="100" defaultValue="90"/>
+              </div>
+            </div>
+          </details>
         </div>
       )}
 

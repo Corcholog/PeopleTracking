@@ -154,7 +154,6 @@
   padding: 0px;
   background-color: #192231;
   color: #98878F;
-  max-height: 40px;
 }
 
 .zoomDropdown summary {
@@ -212,6 +211,59 @@
 
 .zoomScrollContainer::-webkit-scrollbar-thumb:hover {
   background: #7d6f77; /* color del pulgar al pasar el mouse */
+}
+
+.trackingDropdown {
+  margin: 1rem;
+  border: 1px solid #98878f;
+  border-radius: 5px;
+  padding: 0px;
+  background-color: #192231;
+  color: #98878f;
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+
+}
+
+.trackingDropdown summary {
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.9rem;
+  margin: 0.5rem 0px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.optionsContainer {
+  gap: 0.5rem;
+  width: 90%;
+  justify-self: center;
+}
+
+.trackingOption{
+  font-size: medium;
+  border: 1px solid #98878f;
+  border-radius: 5px;
+  margin-bottom: 0.5rem;
+}
+
+.trackingOption:hover {
+  background-color: #98878f;
+  color: #192231;
+}
+
+.trackingOption input {
+  width: 20%;
+}
+
+.trackingOption select {
+  cursor: pointer;
+}
+
+.trackingOption option {
+  background-color: #192231;
+  color: #98878F;
 }
 
 .hidden {

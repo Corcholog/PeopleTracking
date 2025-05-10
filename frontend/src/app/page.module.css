@@ -1,13 +1,70 @@
-.main {
-  margin: 0;
-  padding: 20px;
-  font-family: Arial, sans-serif;
+.layoutContainer {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Sidebar fija a la izquierda */
+.sidebar {
+  width: 220px;
+  background-image: linear-gradient(#272831, #7a525c);
+  box-sizing: border-box;
+  color: #98878F;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  height: 100vh;
-  overflow: hidden;
+  justify-content: flex-start;
+  border-right: 3px solid #98878F;
+}
+
+/* Botón para colapsar */
+.collapseButton {
+  font-weight: bold;
+  align-self: flex-end;
+  background: transparent;
+  color: #98878F;
+  border: 1px solid #98878F;
+  border-right: none;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  margin-top: 1rem;
+  border-radius: 5px 0 0 5px
+}
+
+/* Botón para expandir cuando está colapsado */
+.expandButton {
+  font-weight: bold;
+  position: absolute;
+  margin-left: 0;
+  margin-top: 1rem;
+  background-color: #192231;
+  color: #98878F;
+  border: 1px solid #98878F;
+  border-left: none;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  z-index: 1000;
+  border-radius: 0 5px 5px 0;
+}
+
+/* El main se ajusta al tamaño restante */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
   background-image: linear-gradient(#383b4d, #985E6D);
+}
+
+
+.header {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Centra todo lo que esté dentro */
+  vertical-align: middle;
 }
 
 .title{
@@ -37,28 +94,52 @@
   border-left: 2px solid #98878F;
 }
 
-.contentRow {
-  display: flex;
-  width: 100%;
-  height: 85%;
-  justify-content: center;
-  align-items: stretch;
-  gap: 20px; /* Espacio entre el video y la scrollbar */
-  margin-bottom: 15px;
+.selectCamera {
+  padding: 10px 20px;
+  font-size: 16px;
+  cursor: pointer;
+  background-color: #192231;
+  color: #98878F;
+  border: none;
+  border-left: 2px solid #98878F;
+  border-radius: 0px 5px 5px 0px; 
+  appearance: none; /* Elimina estilo por defecto */
+  text-align: center;
+  position: relative;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2398878F' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  background-size: 12px;
+}
+
+
+.selectCamera option {
+  background-color: #192231;
+  color: #98878F;
+}
+
+.selectCamera::-ms-expand {
+  display: none; /* Elimina el triángulo de la derecha */
 }
 
 .videoContainer {
+  display: flex;
+  width: 95%;
+  height: 80%;
   flex: 1;
   background-color: #98878F;
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
   border-radius: 5px;
+  margin-bottom: 1rem;
 }
 
 .videoElement {
   width: 100%;
   height: 100%;
+  border-radius: 5px;
   object-fit: contain;
 }
 
@@ -66,10 +147,39 @@
   color: #192231;
 }
 
-.zoomScrollContainer {
-  width: 150px; /* ancho fijo en el costado */
+.zoomDropdown {
+  margin: 1rem;
+  border: 1px solid #98878F;
+  border-radius: 5px;
+  padding: 0px;
+  background-color: #192231;
+  color: #98878F;
+  max-height: 40px;
+}
+
+.zoomDropdown summary {
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 1rem;
+  margin: 0.5rem 0px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.zoomDropdown summary::-webkit-details-marker {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+/* Cuando el details está abierto, expandimos la altura del contenedor */
+.zoomDropdown[open] .zoomScrollContainer {
+  max-height: 350px; /* o lo que necesites para mostrar el scroll */
   overflow-y: auto;
-  border: 3px solid #98878F;
+}
+
+.zoomScrollContainer {
+  width: 100%; /* ancho fijo en el costado */
+  overflow-y: auto;
   padding: 5px;
   background-color: #192231;
   border-radius: 5px;
@@ -87,7 +197,7 @@
 }
 
 .zoomScrollContainer::-webkit-scrollbar {
-  width: 15px; /* ancho del scrollbar vertical */
+  width: 10px; /* ancho del scrollbar vertical */
 }
 
 .zoomScrollContainer::-webkit-scrollbar-track {
@@ -107,5 +217,3 @@
 .hidden {
   display: none;
 }
-
-

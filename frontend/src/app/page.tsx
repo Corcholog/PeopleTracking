@@ -137,44 +137,70 @@ export default function DashboardPage() {
     }
   };
 
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
   return (
-    <main className={styles.main}>
-      <h1 className={styles.title}>Seleccionar fuente de imagen</h1>
-
-      <div className={styles.buttonGroup}>
-        {!videoSrc && !isCameraActive && (
-          <>
-            <button onClick={handleStartCamera}>Cámara del dispositivo</button>
-            <button onClick={() => fileInputRef.current?.click()}>Subir archivo</button>
-          </>
-        )}
-        {(videoSrc || isCameraActive) && (
-          <>
-          <button onClick={handleStopCamera}>Eliminar fuente de video</button>
-          {!isTracking && <button onClick={handleStartTracking}>Iniciar Tracking</button>}
-        </>
-        )}
-      </div>
-
-      {isCameraActive && !videoSrc && !isTracking && (
-        <select
-          onChange={(e) => setSelectedDevice(e.target.value)}
-          value={selectedDevice}
-          style={{ marginBottom: "1rem" }}
-        >
-          <option value="">-- seleccionar cámara --</option>
-          {devices.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label || `Cámara ${d.deviceId.slice(0, 5)}`}
-            </option>
-          ))}
-        </select>
+    <div className={styles.layoutContainer}>
+      {isSidebarOpen && (
+        <div className={styles.sidebar}>
+          <button onClick={() => setIsSidebarOpen(false)} className={styles.collapseButton}>
+            {"<"}
+          </button>
+          <details className={styles.zoomDropdown}>
+            <summary>Seleccion Zoom</summary>
+            <div className={styles.zoomScrollContainer}>
+              {Array.from({ length: 20 }).map((_, i) => (
+                <button key={i}>Zoom Persona {i + 1}</button>
+              ))}
+            </div>
+          </details>
+        </div>
       )}
 
-      <div className={styles.contentRow}>
+      {!isSidebarOpen && (
+        <button onClick={() => setIsSidebarOpen(true)} className={styles.expandButton}>
+          {">"}
+        </button>
+      )}
+
+      <main className={styles.main}>
+        <div className={styles.header}>
+          <h1 className={styles.title}>Seleccionar fuente de imagen</h1>
+          <div className={styles.buttonGroup}>
+            {!videoSrc && !isCameraActive && (
+              <>
+                <button onClick={handleStartCamera}>Cámara del dispositivo</button>
+                <button onClick={() => fileInputRef.current?.click()}>Subir archivo</button>
+              </>
+            )}
+            {(videoSrc || isCameraActive) && (
+              <>
+                <button onClick={handleStopCamera}>Eliminar fuente de video</button>
+                {!isTracking && (
+                  <button onClick={handleStartTracking}>Iniciar Tracking</button>
+                )}
+              </>
+            )}
+            {isCameraActive && !videoSrc && !isTracking && (
+              <select
+                className={styles.selectCamera}
+                onChange={(e) => setSelectedDevice(e.target.value)}
+                value={selectedDevice}
+              >
+                <option value="">-- Seleccionar cámara --</option>
+                {devices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Cámara ${d.deviceId.slice(0, 5)}`}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
         <div className={styles.videoContainer}>
           {videoSrc ? (
-              <video
+            <video
               ref={videoRef}
               src={videoSrc}
               controls
@@ -184,15 +210,15 @@ export default function DashboardPage() {
             />
           ) : isTracking ? (
             <>
-            <video
-              ref={videoRef}
-              src={videoSrc || undefined}
-              autoPlay
-              muted
-              controls={false}
-              style={{ display: "none" }}
-            />
-            <canvas ref={annotatedCanvasRef} className={styles.videoElement} />
+              <video
+                ref={videoRef}
+                src={videoSrc || undefined}
+                autoPlay
+                muted
+                controls={false}
+                style={{ display: "none" }}
+              />
+              <canvas ref={annotatedCanvasRef} className={styles.videoElement} />
             </>
           ) : isCameraActive ? (
             <video ref={videoRef} autoPlay muted className={styles.videoElement} />
@@ -201,22 +227,17 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className={styles.zoomScrollContainer}>
-          {Array.from({ length: 20 }).map((_, i) => (
-            <button key={i}>Zoom Persona {i + 1}</button>
-          ))}
-        </div>
-      </div>
+        <input
+          type="file"
+          accept="video/*"
+          onChange={handleVideoChange}
+          className={styles.hidden}
+          ref={fileInputRef}
+        />
 
-      <input
-        type="file"
-        accept="video/*"
-        onChange={handleVideoChange}
-        className={styles.hidden}
-        ref={fileInputRef}
-      />
-
-      <canvas ref={rawCanvasRef} style={{ display: "none" }} />
-    </main>
+        <canvas ref={rawCanvasRef} style={{ display: "none" }} />
+      </main>
+    </div>
   );
+
 }

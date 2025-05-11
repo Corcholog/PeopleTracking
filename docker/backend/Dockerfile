@@ -13,8 +13,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY docker/backend/requirements.txt /app/
-RUN python -m pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN python -m pip install --upgrade pip \
+    && pip install -r requirements.txt \
+    && pip cache purge \
+    && rm -rf /root/.cache
 
 
 EXPOSE 8000

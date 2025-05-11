@@ -1,12 +1,7 @@
+import type { NextConfig } from "next";
 
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  // Esto sustituye a `next export`
-  output: 'export',
-
-  // Opcional: si quieres que el build vaya a una carpeta distinta a `out`
-  // distDir: 'dist',
+const nextConfig: NextConfig = {
+  /* config options here */
 };
 
-module.exports = nextConfig;
-
+export default nextConfig;

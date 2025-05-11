@@ -1,9 +1,15 @@
 import cv2, asyncio, numpy as np
 from fastapi import FastAPI, WebSocket , WebSocketDisconnect, Request
+from pydantic import BaseModel
 from ultralytics import YOLO
 from tracker.tracker import get_predict, draw, reset
 import sys
 import os
+
+id = None
+
+class IDPayload(BaseModel):
+    id: int
 
 app = FastAPI()
 
@@ -60,6 +66,7 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 async def analyze(ws: WebSocket):
     await ws.accept()
     try:
+        global id
         while True:
             data = await ws.receive_bytes()
             
@@ -70,13 +77,13 @@ async def analyze(ws: WebSocket):
                 continue
           # Procesar con YOLO + tracking
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, get_predict, frame)
+            result = await loop.run_in_executor(None, get_predict, frame, id)
             frame_pred, tracks, _ = result
             annotated = draw(frame_pred, tracks)
 
             # Aplicar zoom si hay un centro definido
-            if center is not None:
-                annotated = apply_zoom(annotated, center)
+            # if center is not None:
+            #    annotated = apply_zoom(annotated, center)
 
             # Codificar imagen anotada a JPG para enviar
             _, buf = cv2.imencode(".jpg", annotated)
@@ -90,3 +97,8 @@ async def reset_model(request: Request):
     reset()
     return {"status": "model reset"}
 
+@app.post("/set_id/")
+async def set_id(payload: IDPayload):
+    global id
+    id = payload.id
+    return {"status": "model reset"}

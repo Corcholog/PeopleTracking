@@ -28,8 +28,11 @@ fn main() {
 
       Ok(())
     })
-    .on_window_event(move |app_handle, event| {
+
+.on_window_event(move |app_handle, event| {
       if let WindowEvent::CloseRequested { .. } = event {
+        // Cerrar sidecar si se desea
+
         println!("🧹 Cerrando ventana, liberando sidecar...");
 
         // 1) Obtengo el state

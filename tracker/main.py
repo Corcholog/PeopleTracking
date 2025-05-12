@@ -221,3 +221,4 @@ print(f"seteada :  {confidence_threshold}")
 set_default_confidence()
 print(f"seteada default{confidence_threshold}")
 main(video_path, 20, use_gpu=True)
+

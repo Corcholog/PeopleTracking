@@ -5,15 +5,28 @@ from ultralytics import YOLO
 from tracker.tracker import get_predict, draw, reset, set_confidence, set_gpu_usage
 import sys
 import os
-
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 
-app = FastAPI()
+cpu_count = os.cpu_count() or 1
+executor = ThreadPoolExecutor(max_workers=cpu_count)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 5.1 Warm-up: inferencia dummy
+    dummy = np.zeros((480,640,3), np.uint8)
+    _ , _, _ = get_predict(dummy)
+    print("✅ Modelo calentado", flush=True)
+    yield  # aquí arranca FastAPI
+    # Aquí irían limpiezas si hicieran falta
+
+app = FastAPI(lifespan=lifespan)
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,6 +98,10 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     await ws.accept()
+
+    # 2) Informa al cliente que el servidor está listo
+    await ws.send_json({"ready": True})
+
     try:
         global id
         while True:
@@ -97,8 +114,8 @@ async def analyze(ws: WebSocket):
                 continue
           # Procesar con YOLO + tracking
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, get_predict, frame, id)
-            frame_pred, tracks, _ = result
+            result = await loop.run_in_executor(executor, get_predict, frame, id)
+            frame_pred, tracks, center = result
             annotated = draw(frame_pred, tracks)
 
             center = None

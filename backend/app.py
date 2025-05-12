@@ -1,11 +1,18 @@
 import cv2, asyncio, numpy as np
 from fastapi import FastAPI, WebSocket , WebSocketDisconnect
+from contextlib import asynccontextmanager
 from ultralytics import YOLO
 from tracker.tracker import get_predict, draw
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import os
 
-app = FastAPI()
+
+
+
+# Crea un executor con N hilos
+cpu_count = os.cpu_count() or 1
+executor = ThreadPoolExecutor(max_workers=cpu_count)
 
 # Detecta si está en un ejecutable de PyInstaller
 if getattr(sys, 'frozen', False):
@@ -55,10 +62,25 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 
     return zoomed
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 5.1 Warm-up: inferencia dummy
+    dummy = np.zeros((480,640,3), np.uint8)
+    _ , _, _ = get_predict(dummy)
+    print("✅ Modelo calentado", flush=True)
+    yield  # aquí arranca FastAPI
+    # Aquí irían limpiezas si hicieran falta
+
+app = FastAPI(lifespan=lifespan)
+
 
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     await ws.accept()
+
+    # 2) Informa al cliente que el servidor está listo
+    await ws.send_json({"ready": True})
+
     try:
         while True:
             data = await ws.receive_bytes()
@@ -70,8 +92,8 @@ async def analyze(ws: WebSocket):
                 continue
           # Procesar con YOLO + tracking
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, get_predict, frame)
-            frame_pred, tracks, _ = result
+            result = await loop.run_in_executor(executor, get_predict, frame)
+            frame_pred, tracks, center = result
             annotated = draw(frame_pred, tracks)
 
             # Aplicar zoom si hay un centro definido

@@ -16,6 +16,8 @@ export default function DashboardPage() {
   const annotatedCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<ReconnectingWebSocket | null>(null);
 
+  const [isReady, setIsReady] = useState(false);
+
   // Listar cámaras disponibles
   useEffect(() => {
     async function listarCamaras() {
@@ -53,14 +55,31 @@ export default function DashboardPage() {
     };
   }, [selectedDevice]);
 
-  // WebSocket: enviar frames y recibir respuesta
+    // Iniciar WebSocket y esperar el “ready”
+  useEffect(() => {
+    const ws = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
+    ws.binaryType = "arraybuffer";  // recibir binarios :contentReference[oaicite:3]{index=3}
+    ws.onmessage = (evt) => {
+      if (typeof evt.data === "string") {
+        // Mensaje JSON: ready o errores
+        const msg = JSON.parse(evt.data);
+        if (msg.ready) {
+          setIsReady(true);
+          wsRef.current = ws; // guardamos la conexión
+        }
+      }
+    };
+    return () => ws.close();
+  }, []);
+
+// WebSocket: enviar frames y recibir respuesta
   useEffect(() => {
     if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
 
-    wsRef.current = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
-    wsRef.current.binaryType = "arraybuffer";
+    const ws = wsRef.current!;
 
-    wsRef.current.onmessage = (evt) => {
+    ws.onmessage = (evt) => {
+      // Mensaje binario: ArrayBuffer
       const bytes = new Uint8Array(evt.data as ArrayBuffer);
       const blob = new Blob([bytes], { type: "image/jpeg" });
       const img = new Image();
@@ -74,16 +93,16 @@ export default function DashboardPage() {
       img.src = URL.createObjectURL(blob);
     };
 
-    const intervalId = window.setInterval(() => {
+    const intervalId = setInterval(() => {
       const videoEl = videoRef.current!;
       const canvas = rawCanvasRef.current!;
-      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+      if (ws.readyState !== WebSocket.OPEN) return;
       canvas.width = videoEl.videoWidth;
       canvas.height = videoEl.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx?.drawImage(videoEl, 0, 0);
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(videoEl, 0, 0);
       canvas.toBlob((blob) => {
-        if (blob) wsRef.current?.send(blob);
+        if (blob) ws.send(blob);  // envía binario puro :contentReference[oaicite:4]{index=4}
       }, "image/jpeg", 0.7);
     }, 100);
 
@@ -91,7 +110,7 @@ export default function DashboardPage() {
       window.clearInterval(intervalId);
       wsRef.current?.close();
     };
-  }, [isTracking]);
+  }, [isReady,isTracking]);
 
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -181,86 +200,115 @@ export default function DashboardPage() {
       )}
 
       {!isSidebarOpen && (
-        <button onClick={() => setIsSidebarOpen(true)} className={styles.expandButton}>
-          {">"}
-        </button>
-      )}
+      <button
+        onClick={() => setIsSidebarOpen(true)}
+        className={styles.expandButton}
+      >
+        {">"}
+      </button>
+    )}
 
-      <main className={styles.main}>
-        <div className={styles.header}>
-          <h1 className={styles.title}>Seleccionar fuente de imagen</h1>
-          <div className={styles.buttonGroup}>
-            {!videoSrc && !isCameraActive && (
-              <>
-                <button onClick={handleStartCamera}>Cámara del dispositivo</button>
-                <button onClick={() => fileInputRef.current?.click()}>Subir archivo</button>
-              </>
-            )}
-            {(videoSrc || isCameraActive) && (
-              <>
-                <button onClick={handleStopCamera}>Eliminar fuente de video</button>
-                {!isTracking && (
-                  <button onClick={handleStartTracking}>Iniciar Tracking</button>
-                )}
-              </>
-            )}
-            {isCameraActive && !videoSrc && !isTracking && (
-              <select
-                className={styles.selectCamera}
-                onChange={(e) => setSelectedDevice(e.target.value)}
-                value={selectedDevice}
-              >
-                <option value="">-- Seleccionar cámara --</option>
-                {devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || `Cámara ${d.deviceId.slice(0, 5)}`}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-
-        <div className={styles.videoContainer}>
-          {videoSrc ? (
-            <video
-              ref={videoRef}
-              src={videoSrc}
-              controls
-              autoPlay
-              muted
-              className={styles.videoElement}
-            />
-          ) : isTracking ? (
+    <main className={styles.main}>
+      <div className={styles.header}>
+        <h1 className={styles.title}>Seleccionar fuente de imagen</h1>
+        <div className={styles.buttonGroup}>
+          {!videoSrc && !isCameraActive && (
             <>
-              <video
-                ref={videoRef}
-                src={videoSrc || undefined}
-                autoPlay
-                muted
-                controls={false}
-                style={{ display: "none" }}
-              />
-              <canvas ref={annotatedCanvasRef} className={styles.videoElement} />
+              <button onClick={handleStartCamera}>
+                Cámara del dispositivo
+              </button>
+              <button onClick={() => fileInputRef.current?.click()}>
+                Subir archivo
+              </button>
             </>
-          ) : isCameraActive ? (
-            <video ref={videoRef} autoPlay muted className={styles.videoElement} />
-          ) : (
-            <p className={styles.textVideoContainer}>Esperando fuente de video</p>
+          )}
+
+          {(videoSrc || isCameraActive) && (
+            <>
+              <button onClick={handleStopCamera}>
+                Eliminar fuente de video
+              </button>
+              {!isTracking && (
+                <button
+                  onClick={handleStartTracking}
+                  disabled={!isReady}
+                  className={!isReady ? styles.disabledButton : ""}
+                >
+                  {isReady ? "Iniciar Tracking" : "Cargando tracker…"}
+                </button>
+              )}
+            </>
+          )}
+
+          {isCameraActive && !videoSrc && !isTracking && (
+            <select
+              className={styles.selectCamera}
+              onChange={(e) => setSelectedDevice(e.target.value)}
+              value={selectedDevice}
+            >
+              <option value="">-- Seleccionar cámara --</option>
+              {devices.map((d) => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Cámara ${d.deviceId.slice(0, 5)}`}
+                </option>
+              ))}
+            </select>
           )}
         </div>
+      </div>
 
-        <input
-          type="file"
-          accept="video/*"
-          onChange={handleVideoChange}
-          className={styles.hidden}
-          ref={fileInputRef}
-        />
+      <div className={styles.videoContainer}>
+        {videoSrc ? (
+          <video
+            ref={videoRef}
+            src={videoSrc}
+            controls
+            autoPlay
+            muted
+            className={styles.videoElement}
+          />
+        ) : isTracking ? (
+          <>
+            <video
+              ref={videoRef}
+              src={videoSrc || undefined}
+              autoPlay
+              muted
+              controls={false}
+              style={{ display: "none" }}
+            />
+            <canvas
+              ref={annotatedCanvasRef}
+              className={styles.videoElement}
+            />
+          </>
+        ) : isCameraActive ? (
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            className={styles.videoElement}
+          />
+        ) : (
+          <p className={styles.textVideoContainer}>
+            Esperando fuente de video
+          </p>
+        )}
+      </div>
 
-        <canvas ref={rawCanvasRef} style={{ display: "none" }} />
-      </main>
-    </div>
-  );
+      <input
+        type="file"
+        accept="video/*"
+        onChange={handleVideoChange}
+        className={styles.hidden}
+        ref={fileInputRef}
+      />
 
+      <canvas
+        ref={rawCanvasRef}
+        style={{ display: "none" }}
+      />
+    </main>
+  </div>
+);
 }

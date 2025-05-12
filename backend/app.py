@@ -74,6 +74,8 @@ async def analyze(ws: WebSocket):
             frame_pred, tracks, _ = result
             annotated = draw(frame_pred, tracks)
 
+            center = None
+
             # Aplicar zoom si hay un centro definido
             if center is not None:
                 annotated = apply_zoom(annotated, center)

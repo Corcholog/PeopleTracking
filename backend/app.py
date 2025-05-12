@@ -2,16 +2,36 @@ import cv2, asyncio, numpy as np
 from fastapi import FastAPI, WebSocket , WebSocketDisconnect, Request
 from pydantic import BaseModel
 from ultralytics import YOLO
-from tracker.tracker import get_predict, draw, reset
+from tracker.tracker import get_predict, draw, reset, set_confidence, set_gpu_usage
 import sys
 import os
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 id = None
+config_state = {
+    "confidence_threshold": 0.5,
+    "gpu": False,
+}
 
 class IDPayload(BaseModel):
     id: int
 
-app = FastAPI()
+class ConfigPayload(BaseModel):
+    confidence: float = 0.5
+    gpu: bool = False
+
 
 # Detecta si está en un ejecutable de PyInstaller
 if getattr(sys, 'frozen', False):
@@ -69,7 +89,7 @@ async def analyze(ws: WebSocket):
         global id
         while True:
             data = await ws.receive_bytes()
-            
+
           # Decodificar la imagen recibida
             nparr = np.frombuffer(data, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -81,9 +101,11 @@ async def analyze(ws: WebSocket):
             frame_pred, tracks, _ = result
             annotated = draw(frame_pred, tracks)
 
+            center = None
+
             # Aplicar zoom si hay un centro definido
-            # if center is not None:
-            #    annotated = apply_zoom(annotated, center)
+            if center is not None:
+                annotated = apply_zoom(annotated, center)
 
             # Codificar imagen anotada a JPG para enviar
             _, buf = cv2.imencode(".jpg", annotated)
@@ -102,3 +124,16 @@ async def set_id(payload: IDPayload):
     global id
     id = payload.id
     return {"status": "model reset"}
+
+
+@app.post("/config/")
+async def update_config(payload: ConfigPayload):
+    if payload.confidence is not None:
+        set_confidence(payload.confidence)
+        config_state["confidence_threshold"] = payload.confidence
+    if payload.gpu is not None:
+        set_gpu_usage(payload.gpu)
+        config_state["gpu"] = payload.gpu
+
+    print(f"[CONFIG] Estado actualizado: {config_state}")
+    return {"status": "ok", "new_state": config_state}

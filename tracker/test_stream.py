@@ -48,6 +48,7 @@ def get_predict(frame, id=None):
 cap = cv2.VideoCapture(video_path)
 start_time = time.time()
 show_only_id_3 = False
+show_all = True
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -62,8 +63,9 @@ while cap.isOpened():
     cv2.imshow("Tracker", frame)
 
     elapsed_time = time.time() - start_time
-    if elapsed_time > 3.0:
-        show_only_id_3 = True
+    if not show_all:
+        if elapsed_time > 6.0:
+            show_only_id_3 = True
 
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break

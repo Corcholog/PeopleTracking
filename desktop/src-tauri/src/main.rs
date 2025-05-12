@@ -15,6 +15,8 @@ fn main() {
       _backend: Mutex::new(None),
     })
     .setup(|app| {
+      //contar tiempo
+
       let sidecar = app.shell().sidecar("fastapi_server")
         .expect("Sidecar no configurado en externalBin");
 
@@ -24,19 +26,13 @@ fn main() {
       let state: State<AppState> = app.state();
       *state._backend.lock().unwrap() = Some(child);
 
-      tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-          if let CommandEvent::Stdout(line) = event {
-            println!("FastAPI: {}", String::from_utf8_lossy(&line));
-          }
-        }
-      });
-
       Ok(())
     })
+
 .on_window_event(move |app_handle, event| {
       if let WindowEvent::CloseRequested { .. } = event {
         // Cerrar sidecar si se desea
+
         println!("🧹 Cerrando ventana, liberando sidecar...");
 
         // 1) Obtengo el state

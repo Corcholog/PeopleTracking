@@ -9,6 +9,9 @@ export default function DashboardPage() {
   const [isTracking, setIsTracking] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const [processingUnit, setProcessingUnit] = useState("cpu");
+  const [fpsLimit, setFpsLimit] = useState(30);
+  const [confidenceThreshold, setConfidenceThreshold] = useState(50);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -104,15 +107,16 @@ export default function DashboardPage() {
       canvas.toBlob((blob) => {
         if (blob) ws.send(blob);  // envía binario puro :contentReference[oaicite:4]{index=4}
       }, "image/jpeg", 0.7);
-    }, 100);
+    }, 1000 / fpsLimit);
 
     return () => {
       window.clearInterval(intervalId);
       wsRef.current?.close();
     };
-  }, [isReady,isTracking]);
+  }, [isTracking, fpsLimit]); // se ejecuta cada vez que cambia isTracking o fpsLimit
 
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    fetch("http://localhost:8000/reset_model/", { method: "POST" });
     const file = event.target.files?.[0];
     if (file) {
       const videoUrl = URL.createObjectURL(file);
@@ -126,6 +130,7 @@ export default function DashboardPage() {
   };
 
   const handleStartCamera = () => {
+    fetch("http://localhost:8000/reset_model/", { method: "POST" });
     setVideoSrc(null);
     setIsCameraActive(true);
     setIsTracking(false);
@@ -154,6 +159,32 @@ export default function DashboardPage() {
     }
   };
 
+  useEffect(() => {
+    const sendTrackingConfig = async () => {
+      const config = {
+        confidence: confidenceThreshold/100,
+        gpu: processingUnit === "gpu",
+      };
+
+      try {
+        const res = await fetch("http://localhost:8000/config/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(config)
+        });
+
+        const json = await res.json();
+        console.log("Configuración enviada al backend:", json);
+      } catch (err) {
+        console.error("Error al enviar configuración:", err);
+      }
+    };
+
+    sendTrackingConfig();
+  }, [processingUnit, confidenceThreshold]);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   return (
@@ -177,7 +208,7 @@ export default function DashboardPage() {
               {/* Unidad de procesamiento */}
               <div className={styles.trackingOption}>
                 <label>Unidad de procesamiento:</label><br></br>
-                <select defaultValue="cpu">
+                <select value={processingUnit} onChange={(e) => setProcessingUnit(e.target.value)}>
                   <option value="cpu">CPU</option>
                   <option value="gpu">GPU</option>
                 </select>
@@ -186,13 +217,13 @@ export default function DashboardPage() {
               {/* FPS */}
               <div className={styles.trackingOption}>
                 <label>FPS deseados:</label><br></br>
-                <input type="number" min="1" max="60" defaultValue="30"/>
+                <input type="number" min="1" max="60" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
               </div>
 
               {/* Porcentaje de confianza */}
               <div className={styles.trackingOption}>
                 <label>Porcentaje de confianza (%):</label><br></br>
-                <input type="number" min="0" max="100" defaultValue="90"/>
+                <input type="number" min="0" max="100" value={confidenceThreshold} onChange={(e) => setConfidenceThreshold(Number(e.target.value))}/>
               </div>
             </div>
           </details>

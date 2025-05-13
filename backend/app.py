@@ -118,11 +118,14 @@ async def analyze(ws: WebSocket):
             frame_pred, tracks, center = result
             annotated = draw(frame_pred, tracks)
 
-            center = None
-
-            # Aplicar zoom si hay un centro definido
             if center is not None:
-                annotated = apply_zoom(annotated, center)
+                annotated = apply_zoom(annotated, center, zoom_factor=1.5)
+
+            detections = [{"id": t.track_id, "bbox": t.bbox} for t in tracks]
+            await ws.send_json({
+                "detections": detections,
+                "selected_id": id  # Envía el ID que tiene zoom actualmente(puede ser None)
+            })
 
             # Codificar imagen anotada a JPG para enviar
             _, buf = cv2.imencode(".jpg", annotated)

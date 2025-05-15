@@ -21,6 +21,9 @@ export default function DashboardPage() {
 
   const [isReady, setIsReady] = useState(false);
 
+  const [detections, setDetections] = useState([]);  // Inicialmente un array vacío
+  const [selectedId, setSelectedId] = useState(null);
+
   // Listar cámaras disponibles
   useEffect(() => {
     async function listarCamaras() {
@@ -66,9 +69,11 @@ export default function DashboardPage() {
       if (typeof evt.data === "string") {
         // Mensaje JSON: ready o errores
         const msg = JSON.parse(evt.data);
-        if (msg.ready) {
-          setIsReady(true);
-          wsRef.current = ws; // guardamos la conexión
+        if (msg.type === "ready") {
+          setIsReady(msg.status);
+          if (msg.status) {
+            wsRef.current = ws;
+          }
         }
       }
     };
@@ -82,18 +87,33 @@ export default function DashboardPage() {
     const ws = wsRef.current!;
 
     ws.onmessage = (evt) => {
-      // Mensaje binario: ArrayBuffer
-      const bytes = new Uint8Array(evt.data as ArrayBuffer);
-      const blob = new Blob([bytes], { type: "image/jpeg" });
-      const img = new Image();
-      img.onload = () => {
-        const ctx = annotatedCanvasRef.current!.getContext("2d");
-        annotatedCanvasRef.current!.width = img.width;
-        annotatedCanvasRef.current!.height = img.height;
-        ctx?.drawImage(img, 0, 0);
-        URL.revokeObjectURL(img.src);
-      };
-      img.src = URL.createObjectURL(blob);
+
+      if (typeof evt.data === "string") {
+        // Mensaje JSON: ready o errores
+        const msg = JSON.parse(evt.data);
+        if (msg.type === "lista_de_ids") {
+          console.log("🔍 Detections recibidas:", msg.detections);
+          console.log("🎯 ID seleccionado:", msg.selected_id);
+
+          // Aca estan los datos
+          setDetections(msg.detections);
+          setSelectedId(msg.selected_id);
+        }
+      }
+      else {
+        // Mensaje binario: ArrayBuffer
+        const bytes = new Uint8Array(evt.data as ArrayBuffer);
+        const blob = new Blob([bytes], { type: "image/jpeg" });
+        const img = new Image();
+        img.onload = () => {
+          const ctx = annotatedCanvasRef.current!.getContext("2d");
+          annotatedCanvasRef.current!.width = img.width;
+          annotatedCanvasRef.current!.height = img.height;
+          ctx?.drawImage(img, 0, 0);
+          URL.revokeObjectURL(img.src);
+        };
+        img.src = URL.createObjectURL(blob);
+      }
     };
 
     const intervalId = setInterval(() => {

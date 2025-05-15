@@ -100,7 +100,7 @@ async def analyze(ws: WebSocket):
     await ws.accept()
 
     # 2) Informa al cliente que el servidor está listo
-    await ws.send_json({"ready": True})
+    await ws.send_json({"type": "ready", "status": True})
 
     try:
         global id
@@ -121,10 +121,10 @@ async def analyze(ws: WebSocket):
             if center is not None:
                 annotated = apply_zoom(annotated, center, zoom_factor=1.5)
 
-            detections = [{"id": t.track_id, "bbox": t.bbox} for t in tracks]
             await ws.send_json({
-                "detections": detections,
-                "selected_id": id  # Envía el ID que tiene zoom actualmente(puede ser None)
+                "type": "lista_de_ids",
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "selected_id": id
             })
 
             # Codificar imagen anotada a JPG para enviar

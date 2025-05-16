@@ -145,6 +145,12 @@ async def set_id(payload: IDPayload):
     id = payload.id
     return {"status": "model reset"}
 
+@app.post("/clear_id/")
+async def clear_id():
+    global id
+    id = None
+    return {"status": "id cleared"}
+
 
 @app.post("/config/")
 async def update_config(payload: ConfigPayload):

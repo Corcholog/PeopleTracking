@@ -172,7 +172,7 @@
 
 /* Cuando el details está abierto, expandimos la altura del contenedor */
 .zoomDropdown[open] .zoomScrollContainer {
-  max-height: 350px; /* o lo que necesites para mostrar el scroll */
+  max-height: 300px; /* o lo que necesites para mostrar el scroll */
   overflow-y: auto;
 }
 
@@ -193,6 +193,12 @@
   border-radius: 5px;
   padding: 7px;
   color: #98878F;
+}
+
+.zoomScrollContainer button:hover {
+  background-color: #98878f;
+  color: #192231;
+  cursor: pointer;
 }
 
 .zoomScrollContainer::-webkit-scrollbar {

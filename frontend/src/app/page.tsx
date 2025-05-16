@@ -10,7 +10,7 @@ export default function DashboardPage() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [processingUnit, setProcessingUnit] = useState("cpu");
-  const [fpsLimit, setFpsLimit] = useState(30);
+  const [fpsLimit, setFpsLimit] = useState(15);
   const [confidenceThreshold, setConfidenceThreshold] = useState(50);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -21,7 +21,7 @@ export default function DashboardPage() {
 
   const [isReady, setIsReady] = useState(false);
 
-  const [detections, setDetections] = useState([]);  // Inicialmente un array vacío
+  const [detections, setDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
   const [selectedId, setSelectedId] = useState(null);
 
   // Listar cámaras disponibles
@@ -83,7 +83,11 @@ export default function DashboardPage() {
 // WebSocket: enviar frames y recibir respuesta
   useEffect(() => {
     if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
-
+    //Crear el WebSocket si no existe o está cerrado
+    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+      wsRef.current = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
+      wsRef.current.binaryType = "arraybuffer";
+    }
     const ws = wsRef.current!;
 
     ws.onmessage = (evt) => {
@@ -106,10 +110,12 @@ export default function DashboardPage() {
         const blob = new Blob([bytes], { type: "image/jpeg" });
         const img = new Image();
         img.onload = () => {
-          const ctx = annotatedCanvasRef.current!.getContext("2d");
-          annotatedCanvasRef.current!.width = img.width;
-          annotatedCanvasRef.current!.height = img.height;
-          ctx?.drawImage(img, 0, 0);
+          if (!annotatedCanvasRef.current) return;
+          const ctx = annotatedCanvasRef.current.getContext("2d");
+          if (!ctx) return;
+          annotatedCanvasRef.current.width = img.width;
+          annotatedCanvasRef.current.height = img.height;
+          ctx.drawImage(img, 0, 0);
           URL.revokeObjectURL(img.src);
         };
         img.src = URL.createObjectURL(blob);
@@ -143,10 +149,12 @@ export default function DashboardPage() {
       setVideoSrc(videoUrl);
       setIsCameraActive(false);
       setIsTracking(false);
+      setDetections([]);
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    resetId();
   };
 
   const handleStartCamera = () => {
@@ -165,6 +173,8 @@ export default function DashboardPage() {
     setIsTracking(false)
     setVideoSrc(null);
     setSelectedDevice("");
+    setDetections([]);
+    resetId();
   };
 
   const handleStartTracking = () => {
@@ -177,6 +187,27 @@ export default function DashboardPage() {
         console.error("Error al intentar reproducir el video:", error);
       });
     }
+  };
+
+  const handleZoom = async (id: number) => {
+  try {
+    await fetch("http://localhost:8000/set_id/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id }),
+    });
+  } catch (error) {
+    console.error("Error al enviar ID al backend:", error);
+  }
+  };
+
+  const resetId = async () => {
+  await fetch("http://localhost:8000/clear_id/", {
+    method: "POST",
+  });
+  setSelectedId(null);
   };
 
   useEffect(() => {
@@ -217,8 +248,15 @@ export default function DashboardPage() {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {Array.from({ length: 20 }).map((_, i) => (
-                <button key={i}>Zoom Persona {i + 1}</button>
+              {selectedId !== null && (
+                <button onClick={resetId}>
+                  Quitar Zoom
+                </button>
+              )}
+              {detections.map((det) => (
+                <button key={det.id} onClick={() => handleZoom(det.id)}>
+                  Zoom al ID {det.id}
+                </button>
               ))}
             </div>
           </details>
@@ -237,7 +275,7 @@ export default function DashboardPage() {
               {/* FPS */}
               <div className={styles.trackingOption}>
                 <label>FPS deseados:</label><br></br>
-                <input type="number" min="1" max="60" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
+                <input type="number" min="1" max="30" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
               </div>
 
               {/* Porcentaje de confianza */}

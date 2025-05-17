@@ -33,6 +33,7 @@ tracker/venv/
 
 .venv/
 
+#desktop
 desktop/src-tauri/binaries/fastapi_server-x86_64-pc-windows-msvc.exe
-
-desktop/src-tauri/target/release/bundle/msi/PeopleTracking_1.0.0_x64_en-US.msi
+desktop/src-tauri/target/release/
+desktop/Output/

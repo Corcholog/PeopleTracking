@@ -1,42 +1,64 @@
-import cv2, asyncio, numpy as np
-from fastapi import FastAPI, WebSocket , WebSocketDisconnect, Request
-from pydantic import BaseModel
-from ultralytics import YOLO
-from tracker.tracker import get_predict, draw, reset, set_confidence, set_gpu_usage
 import sys
 import os
+import cv2
+import asyncio
+import numpy as np
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from ultralytics import YOLO
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
+import torch
 
+
+# 1) Detecta si está bundlado o en desarrollo
+if getattr(sys, 'frozen', False):
+    base_dir = sys._MEIPASS
+else:
+    # Asume que este archivo está en backend/, sube un nivel
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+# 2) Inserta la carpeta padre en sys.path (PeopleTracking/)
+sys.path.insert(0, base_dir)
+
+# 3) Ahora sí importamos cosas de tracker/
+from tracker.tracker import get_predict, draw, reset, set_confidence, set_gpu_usage
+
+# ---------------------------------------------------
+# 6) Thread pool para no bloquear el loop de asyncio
+# ---------------------------------------------------
 cpu_count = os.cpu_count() or 1
 executor = ThreadPoolExecutor(max_workers=cpu_count)
 
+# ---------------------------------------------------
+# 7) FastAPI con lifespan para warm‑up
+# ---------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 5.1 Warm-up: inferencia dummy
-    dummy = np.zeros((480,640,3), np.uint8)
-    _ , _, _ = get_predict(dummy)
-    print("✅ Modelo calentado", flush=True)
-    yield  # aquí arranca FastAPI
-    # Aquí irían limpiezas si hicieran falta
+    # Si hay GPU, actívala
+    if torch.cuda.is_available():
+        set_gpu_usage(True)
+    # Warm‑up del modelo con un frame dummy
+    dummy = np.zeros((480, 640, 3), np.uint8)
+    _, _, _ = get_predict(dummy)
+    print("✅ Modelo calentado")
+    yield
 
 app = FastAPI(lifespan=lifespan)
-
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-id = None
-config_state = {
-    "confidence_threshold": 0.5,
-    "gpu": False,
-}
+# ---------------------------------------------------
+# 8) Estado compartido
+# ---------------------------------------------------
+current_id = None
+config_state = {"confidence_threshold": 0.5, "gpu": True}
 
 class IDPayload(BaseModel):
     id: int
@@ -45,95 +67,76 @@ class ConfigPayload(BaseModel):
     confidence: float = 0.5
     gpu: bool = False
 
-
-# Detecta si está en un ejecutable de PyInstaller
-if getattr(sys, 'frozen', False):
-    bundle_dir = sys._MEIPASS
-else:
-    bundle_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-
-# Añadí el path completo de "tracker" al sys.path
-sys.path.insert(0, os.path.join(bundle_dir, 'tracker'))
-
+# ---------------------------------------------------
+# 9) Utilidad de zoom (opcional)
+# ---------------------------------------------------
 def apply_zoom(frame, center, zoom_factor=1.5):
-
     if center is None:
         return frame
-
     x, y = center
-    height, width = frame.shape[:2]
+    h, w = frame.shape[:2]
+    new_w, new_h = int(w / zoom_factor), int(h / zoom_factor)
+    x1 = max(0, x - new_w // 2); y1 = max(0, y - new_h // 2)
+    x2 = min(w, x + new_w // 2); y2 = min(h, y + new_h // 2)
+    crop = frame[y1:y2, x1:x2]
+    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
 
-    # Calcular la región de interés con zoom
-    new_width = int(width / zoom_factor)
-    new_height = int(height / zoom_factor)
-
-    # Asegurarse de que la región de zoom no exceda los límites de la imagen
-    x1 = max(0, x - new_width // 2)
-    y1 = max(0, y - new_height // 2)
-    x2 = min(width, x + new_width // 2)
-    y2 = min(height, y + new_height // 2)
-
-    # Si nos acercamos a los bordes, ajustamos para mantener el tamaño
-    if x2 - x1 < new_width:
-        if x1 == 0:
-            x2 = min(width, x1 + new_width)
-        else:
-            x1 = max(0, x2 - new_width)
-
-    if y2 - y1 < new_height:
-        if y1 == 0:
-            y2 = min(height, y1 + new_height)
-        else:
-            y1 = max(0, y2 - new_height)
-
-    # Recortar la región de interés
-    zoomed = frame[y1:y2, x1:x2]
-
-    # Redimensionar al tamaño original para mantener la misma resolución
-    zoomed = cv2.resize(zoomed, (width, height), interpolation=cv2.INTER_LINEAR)
-
-    return zoomed
-
-
+# ---------------------------------------------------
+# 10) Endpoint WebSocket para análisis
+# ---------------------------------------------------
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     await ws.accept()
-
-    # 2) Informa al cliente que el servidor está listo
     await ws.send_json({"type": "ready", "status": True})
-
+    print("✅ WebSocket aceptado")
     try:
-        global id
+        global current_id
         while True:
             data = await ws.receive_bytes()
+            print(f"📦 Bytes recibidos: {len(data)}")
 
-          # Decodificar la imagen recibida
+            # Decodifica JPEG
             nparr = np.frombuffer(data, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if frame is None:
                 continue
-          # Procesar con YOLO + tracking
+
+            # Procesa en background
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(executor, get_predict, frame, id)
-            frame_pred, tracks, center = result
+            try:
+                frame_pred, tracks, center = await loop.run_in_executor(
+                    executor, get_predict, frame, current_id
+                )
+            except Exception as e:
+                print("❌ Error en get_predict:", e)
+                continue
+
+            # Dibuja y zoom
             annotated = draw(frame_pred, tracks)
+            if center:
+                annotated = apply_zoom(annotated, center)
 
-            if center is not None:
-                annotated = apply_zoom(annotated, center, zoom_factor=1.5)
-
+            # Envía lista de IDs
             await ws.send_json({
                 "type": "lista_de_ids",
                 "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "selected_id": id
+                "selected_id": current_id
             })
 
-            # Codificar imagen anotada a JPG para enviar
+            # Envía imagen anotada
             _, buf = cv2.imencode(".jpg", annotated)
-
             await ws.send_bytes(buf.tobytes())
+
     except WebSocketDisconnect:
         print("Cliente desconectado")
+    except Exception:
+        import traceback; traceback.print_exc()
+    finally:
+        print("🛑 Handler WebSocket terminado.")
 
+# ---------------------------------------------------
+# 11) Endpoints REST para control
+# ---------------------------------------------------
 @app.post("/reset_model/")
 async def reset_model(request: Request):
     reset()
@@ -141,16 +144,15 @@ async def reset_model(request: Request):
 
 @app.post("/set_id/")
 async def set_id(payload: IDPayload):
-    global id
-    id = payload.id
-    return {"status": "model reset"}
+    global current_id
+    current_id = payload.id
+    return {"status": "id updated"}
 
 @app.post("/clear_id/")
 async def clear_id():
     global id
     id = None
     return {"status": "id cleared"}
-
 
 @app.post("/config/")
 async def update_config(payload: ConfigPayload):
@@ -160,6 +162,5 @@ async def update_config(payload: ConfigPayload):
     if payload.gpu is not None:
         set_gpu_usage(payload.gpu)
         config_state["gpu"] = payload.gpu
-
-    print(f"[CONFIG] Estado actualizado: {config_state}")
+    print(f"[CONFIG] {config_state}")
     return {"status": "ok", "new_state": config_state}

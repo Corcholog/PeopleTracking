@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="PeopleTracking" 
+           Language="1033" Version="1.0.0.0" 
+           Manufacturer="TuEmpresa" UpgradeCode="PUT‑GUID‑HERE">
+    <Package InstallerVersion="500" 
+             Compressed="yes" 
+             Comments="PeopleTracking uncompressed MSI"/>
+    <!-- Aquí indicamos que NO queremos empaquetar los CAB dentro del MSI: -->
+    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" />
+    <!-- Resto de fragmentos, componentes y archivos… -->
+    <Feature Id="ProductFeature" Title="PeopleTracking" Level="1">
+      <!-- <ComponentRef>…</ComponentRef> -->
+    </Feature>
+  </Product>
+</Wix>

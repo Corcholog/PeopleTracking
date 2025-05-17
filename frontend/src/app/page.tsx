@@ -9,7 +9,7 @@ export default function DashboardPage() {
   const [isTracking, setIsTracking] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
-  const [processingUnit, setProcessingUnit] = useState("cpu");
+  const [processingUnit, setProcessingUnit] = useState("gpu");
   const [fpsLimit, setFpsLimit] = useState(30);
   const [confidenceThreshold, setConfidenceThreshold] = useState(50);
 
@@ -20,8 +20,9 @@ export default function DashboardPage() {
   const wsRef = useRef<ReconnectingWebSocket | null>(null);
 
   const [isReady, setIsReady] = useState(false);
+  const [isFirstReady, setisFirstReady] = useState(false);
 
-  const [detections, setDetections] = useState([]);  // Inicialmente un array vacío
+  const [detections, setDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
   const [selectedId, setSelectedId] = useState(null);
 
   // Listar cámaras disponibles
@@ -71,6 +72,7 @@ export default function DashboardPage() {
         const msg = JSON.parse(evt.data);
         if (msg.type === "ready") {
           setIsReady(msg.status);
+          setisFirstReady(true);
           if (msg.status) {
             wsRef.current = ws;
           }
@@ -83,7 +85,7 @@ export default function DashboardPage() {
 // WebSocket: enviar frames y recibir respuesta
   useEffect(() => {
     if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
-
+    conectionWebSocket();
     const ws = wsRef.current!;
 
     ws.onmessage = (evt) => {
@@ -106,10 +108,12 @@ export default function DashboardPage() {
         const blob = new Blob([bytes], { type: "image/jpeg" });
         const img = new Image();
         img.onload = () => {
-          const ctx = annotatedCanvasRef.current!.getContext("2d");
+          if (!annotatedCanvasRef.current) return;
+          const ctx = annotatedCanvasRef.current.getContext("2d");
+          if (!ctx) return;
           annotatedCanvasRef.current!.width = img.width;
           annotatedCanvasRef.current!.height = img.height;
-          ctx?.drawImage(img, 0, 0);
+          ctx.drawImage(img, 0, 0);
           URL.revokeObjectURL(img.src);
         };
         img.src = URL.createObjectURL(blob);
@@ -136,10 +140,17 @@ export default function DashboardPage() {
   }, [isTracking, fpsLimit]); // se ejecuta cada vez que cambia isTracking o fpsLimit
 
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    fetch("http://localhost:8000/reset_model/", { method: "POST" });
+    try {
+      if(isFirstReady)
+        fetch("http://localhost:8000/reset_model/", { method: "POST" });
+    } catch (err) {
+        console.error("Todavia no cargo el backend:", err);
+    }
+    conectionWebSocket();
     const file = event.target.files?.[0];
     if (file) {
       const videoUrl = URL.createObjectURL(file);
+      console.log("direccion:", videoUrl);
       setVideoSrc(videoUrl);
       setIsCameraActive(false);
       setIsTracking(false);
@@ -149,8 +160,33 @@ export default function DashboardPage() {
     }
   };
 
+  const conectionWebSocket = () => {
+    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+      const ws = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
+      ws.binaryType = "arraybuffer";  // recibir binarios :contentReference[oaicite:3]{index=3}
+      ws.onmessage = (evt) => {
+        if (typeof evt.data === "string") {
+          // Mensaje JSON: ready o errores
+          const msg = JSON.parse(evt.data);
+          if (msg.type === "ready") {
+            setIsReady(msg.status);
+            if (msg.status) {
+              wsRef.current = ws;
+            }
+          }
+        }
+      }
+    }
+  }
+
   const handleStartCamera = () => {
-    fetch("http://localhost:8000/reset_model/", { method: "POST" });
+    try {
+      if(isFirstReady)
+      fetch("http://localhost:8000/reset_model/", { method: "POST" });
+    } catch (err) {
+        console.error("Todavia no cargo el backend:", err);
+    }
+    conectionWebSocket();
     setVideoSrc(null);
     setIsCameraActive(true);
     setIsTracking(false);
@@ -165,20 +201,41 @@ export default function DashboardPage() {
     setIsTracking(false)
     setVideoSrc(null);
     setSelectedDevice("");
+    setIsReady(false);
   };
 
   const handleStartTracking = () => {
-    setIsTracking(true);
-    setVideoSrc(null);
-    setIsCameraActive(true);
 
-    if (videoRef.current) {
-      videoRef.current.play().catch(error => {
-        console.error("Error al intentar reproducir el video:", error);
-      });
-    }
+  setIsTracking(true);
+  setVideoSrc(null);
+  setIsCameraActive(true);
+
+  if (videoRef.current) {
+    videoRef.current.play().catch(error => {
+    console.error("Error al intentar reproducir el video:", error);
+    });
+  }
+};
+const handleZoom = async (id: number) => {
+  try {
+    await fetch("http://localhost:8000/set_id/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id }),
+    });
+  } catch (error) {
+    console.error("Error al enviar ID al backend:", error);
+  }
   };
 
+  const resetId = async () => {
+  await fetch("http://localhost:8000/clear_id/", {
+    method: "POST",
+  });
+  setSelectedId(null);
+  };
   useEffect(() => {
     const sendTrackingConfig = async () => {
       const config = {
@@ -187,19 +244,25 @@ export default function DashboardPage() {
       };
 
       try {
-        const res = await fetch("http://localhost:8000/config/", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(config)
-        });
+    // Esperar hasta que isFirstReady sea true
+    while (!isFirstReady) {
+      await new Promise(resolve => setTimeout(resolve, 100)); // espera 100ms
+    }
 
-        const json = await res.json();
-        console.log("Configuración enviada al backend:", json);
-      } catch (err) {
-        console.error("Error al enviar configuración:", err);
-      }
+    // Una vez que isFirstReady es true, se envía la configuración
+    const res = await fetch("http://localhost:8000/config/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(config)
+    });
+
+    const json = await res.json();
+    console.log("Configuración enviada al backend:", json);
+  } catch (err) {
+    console.error("Error al enviar configuración:", err);
+  }
     };
 
     sendTrackingConfig();
@@ -217,8 +280,15 @@ export default function DashboardPage() {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {Array.from({ length: 20 }).map((_, i) => (
-                <button key={i}>Zoom Persona {i + 1}</button>
+              {selectedId !== null && (
+                <button onClick={resetId}>
+                  Quitar Zoom
+                </button>
+              )}
+              {detections.map((det) => (
+                <button key={det.id} onClick={() => handleZoom(det.id)}>
+                  Zoom al ID {det.id}
+                </button>
               ))}
             </div>
           </details>
@@ -237,7 +307,7 @@ export default function DashboardPage() {
               {/* FPS */}
               <div className={styles.trackingOption}>
                 <label>FPS deseados:</label><br></br>
-                <input type="number" min="1" max="60" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
+                <input type="number" min="1" max="30" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
               </div>
 
               {/* Porcentaje de confianza */}
@@ -363,4 +433,3 @@ export default function DashboardPage() {
   </div>
 );
 }
-

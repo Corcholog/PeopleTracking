@@ -30,20 +30,31 @@ from tracker.tracker import get_predict, draw, reset, set_confidence, set_gpu_us
 # ---------------------------------------------------
 cpu_count = os.cpu_count() or 1
 executor = ThreadPoolExecutor(max_workers=cpu_count)
+warmup_gpu = False
+warmup_cpu = False
+
 
 # ---------------------------------------------------
 # 7) FastAPI con lifespan para warm‑up
 # ---------------------------------------------------
+hardware_status = {"gpu_available": False}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Si hay GPU, actívala
+    global warmup_gpu, warmup_cpu, hardware_status
     if torch.cuda.is_available():
         set_gpu_usage(True)
-    # Warm‑up del modelo con un frame dummy
+        warmup_gpu = True
+        hardware_status["gpu_available"] = True
+    else:
+        warmup_cpu = True
+        hardware_status["gpu_available"] = False
+    # Warm-up del modelo
     dummy = np.zeros((480, 640, 3), np.uint8)
     _, _, _ = get_predict(dummy)
     print("✅ Modelo calentado")
     yield
+
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -156,11 +167,27 @@ async def clear_id():
 
 @app.post("/config/")
 async def update_config(payload: ConfigPayload):
+    global warmup_gpu, warmup_cpu
     if payload.confidence is not None:
         set_confidence(payload.confidence)
         config_state["confidence_threshold"] = payload.confidence
     if payload.gpu is not None:
-        set_gpu_usage(payload.gpu)
+        if set_gpu_usage(payload.gpu):
+            if not warmup_gpu:
+                dummy = np.zeros((480, 640, 3), np.uint8)
+                _, _, _ = get_predict(dummy)
+                warmup_gpu = True
+                warmup_cpu = False
+        else:
+            if not warmup_cpu:
+                dummy = np.zeros((480, 640, 3), np.uint8)
+                _, _, _ = get_predict(dummy)
+                warmup_cpu = True
+                warmup_gpu = False
         config_state["gpu"] = payload.gpu
     print(f"[CONFIG] {config_state}")
     return {"status": "ok", "new_state": config_state}
+
+@app.get("/hardware_status/")
+async def get_hardware_status():
+    return hardware_status

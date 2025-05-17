@@ -154,10 +154,12 @@ export default function DashboardPage() {
       setVideoSrc(videoUrl);
       setIsCameraActive(false);
       setIsTracking(false);
+      setDetections([]);
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    resetId();
   };
 
   const conectionWebSocket = () => {

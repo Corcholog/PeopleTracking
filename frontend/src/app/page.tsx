@@ -24,6 +24,24 @@ export default function DashboardPage() {
 
   const [detections, setDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [hasGPU, setHasGPU] = useState<boolean>(true); // Por defecto asumimos que tiene GPU
+
+  // Comprobar si el sistema tiene GPU
+  useEffect(() => {
+    const checkHardwareStatus = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/hardware_status/");
+        const data = await res.json();
+        setHasGPU(data.has_gpu);
+      } catch (error) {
+        console.error("Error al obtener el estado de hardware:", error);
+        setHasGPU(false); // fallback
+      }
+    };
+
+    checkHardwareStatus();
+  }, []);
+
 
   // Listar cámaras disponibles
   useEffect(() => {
@@ -240,6 +258,10 @@ const handleZoom = async (id: number) => {
   };
   useEffect(() => {
     const sendTrackingConfig = async () => {
+      if (isTracking) {
+        console.warn("No se puede cambiar CPU/GPU mientras se está trackeando");
+        return;
+      }
       const config = {
         confidence: confidenceThreshold/100,
         gpu: processingUnit === "gpu",
@@ -298,13 +320,19 @@ const handleZoom = async (id: number) => {
             <summary> Configuración tracking</summary>
             <div className={styles.optionsContainer}>
               {/* Unidad de procesamiento */}
+              {hasGPU && (
               <div className={styles.trackingOption}>
                 <label>Unidad de procesamiento:</label><br></br>
-                <select value={processingUnit} onChange={(e) => setProcessingUnit(e.target.value)}>
-                  <option value="cpu">CPU</option>
+                <select
+                  value={processingUnit}
+                  onChange={(e) => setProcessingUnit(e.target.value)}
+                  disabled={isTracking}
+                >
                   <option value="gpu">GPU</option>
+                  <option value="cpu">CPU</option>
                 </select>
               </div>
+              )}
 
               {/* FPS */}
               <div className={styles.trackingOption}>

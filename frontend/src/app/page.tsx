@@ -26,22 +26,6 @@ export default function DashboardPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [hasGPU, setHasGPU] = useState<boolean>(true); // Por defecto asumimos que tiene GPU
 
-  // Comprobar si el sistema tiene GPU
-  useEffect(() => {
-    const checkHardwareStatus = async () => {
-      try {
-        const res = await fetch("http://localhost:8000/hardware_status/");
-        const data = await res.json();
-        setHasGPU(data.has_gpu);
-      } catch (error) {
-        console.error("Error al obtener el estado de hardware:", error);
-        setHasGPU(false); // fallback
-      }
-    };
-
-    checkHardwareStatus();
-  }, []);
-
 
   // Listar cámaras disponibles
   useEffect(() => {
@@ -91,6 +75,18 @@ export default function DashboardPage() {
         if (msg.type === "ready") {
           setIsReady(msg.status);
           setisFirstReady(true);
+          const checkHardwareStatus = async () => {
+            try {
+              const res = await fetch("http://localhost:8000/hardware_status/");
+              const data = await res.json();
+              setHasGPU(data.has_gpu);
+            } catch (error) {
+              console.error("Error al obtener el estado de hardware:", error);
+              setHasGPU(false); // fallback
+            }
+          };
+      
+          checkHardwareStatus();
           if (msg.status) {
             wsRef.current = ws;
           }

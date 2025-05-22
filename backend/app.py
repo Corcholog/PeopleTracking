@@ -84,7 +84,7 @@ class ConfigPayload(BaseModel):
 # 9) Utilidad de zoom (opcional)
 # ---------------------------------------------------
 def apply_zoom(frame, center, zoom_factor=1.5):
-    if center is None:
+    if center is None or current_id is None:
         return frame
     x, y = center
     h, w = frame.shape[:2]
@@ -195,8 +195,8 @@ async def set_id(payload: IDPayload):
 
 @app.post("/clear_id/")
 async def clear_id():
-    global id
-    id = None
+    global current_id
+    current_id = None
     return {"status": "id cleared"}
 
 @app.post("/config/")

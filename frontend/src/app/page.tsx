@@ -273,7 +273,8 @@ const handleZoom = async (id: number) => {
   };
 
   const resetId = async () => {
-  await fetch("http://localhost:8000/clear_id/", {
+    setSelectedId(null);
+    await fetch("http://localhost:8000/clear_id/", {
     method: "POST",
   });
   setSelectedId(null);

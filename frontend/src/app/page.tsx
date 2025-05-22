@@ -352,10 +352,13 @@ const handleZoom = async (id: number) => {
               )}
 
               {/* FPS */}
+              {!isTracking && 
               <div className={styles.trackingOption}>
                 <label>FPS deseados:</label><br></br>
                 <input type="number" min="1" max="30" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
               </div>
+              }
+              
 
               {/* Porcentaje de confianza */}
               <div className={styles.trackingOption}>

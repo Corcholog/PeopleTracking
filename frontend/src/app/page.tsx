@@ -153,6 +153,27 @@ export default function DashboardPage() {
     };
   }, [isTracking, fpsLimit]); // se ejecuta cada vez que cambia isTracking o fpsLimit
 
+  // Cambiar fuente de video
+  const handleAddUrl = async () => {
+    const url = prompt("Ingresa la URL de la imagen:");
+    if (!url) return;
+    try {
+      const response = await fetch("http://localhost:8000/upload-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ imageUrl: url }),
+      });
+      if (!response.ok) {
+        throw new Error("Error al enviar la URL al backend.");
+      }
+      const data = await response.json();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     try {
       if(isFirstReady)
@@ -366,6 +387,9 @@ const handleZoom = async (id: number) => {
               </button>
               <button onClick={() => fileInputRef.current?.click()}>
                 Subir archivo
+              </button>
+              <button onClick={handleAddUrl}>
+                Stream de camara en YT
               </button>
             </>
           )}

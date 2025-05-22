@@ -32,7 +32,8 @@ cpu_count = os.cpu_count() or 1
 executor = ThreadPoolExecutor(max_workers=cpu_count)
 warmup_gpu = False
 warmup_cpu = False
-
+stream_url = False
+url = False
 
 # ---------------------------------------------------
 # 7) FastAPI con lifespan para warm‑up
@@ -191,3 +192,19 @@ async def update_config(payload: ConfigPayload):
 @app.get("/hardware_status/")
 async def get_hardware_status():
     return hardware_status
+
+@app.post("/upload-url/")
+async def upload_url(request: Request):
+    global stream_url, url
+    data = await request.json()
+    stream_url = True if data.get("stream_url") else False
+    url = data.get("url")
+    print(f"Stream URL: {stream_url}")
+    return {"status": "ok"}
+
+@app.post("/clear-url/")
+async def clear_url():
+    global stream_url, url
+    stream_url = False
+    url = False
+    return {"status": "ok"}

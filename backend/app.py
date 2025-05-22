@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ultralytics import YOLO
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
+from yt_dlp import YoutubeDL
 import torch
 
 
@@ -96,20 +97,44 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 # ---------------------------------------------------
 # 10) Endpoint WebSocket para análisis
 # ---------------------------------------------------
+
+
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
     print("✅ WebSocket aceptado")
     try:
-        global current_id
-        while True:
-            data = await ws.receive_bytes()
-            print(f"📦 Bytes recibidos: {len(data)}")
+        global current_id, video_url, stream_url
+        cap = None
 
-            # Decodifica JPEG
-            nparr = np.frombuffer(data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        while True:
+            frame = None
+
+            if stream_url and video_url:
+                if cap is None:
+                    cap = cv2.VideoCapture(video_url)
+                    if not cap.isOpened():
+                        await ws.send_json({"type": "error", "message": "No se pudo abrir el stream"})
+                        print("❌ No se pudo abrir el stream")
+                        break
+
+                ret, frame = cap.read()
+                if not ret:
+                    print("❌ No se pudo leer el frame del stream")
+                    await asyncio.sleep(0.1)
+                    continue
+            else:
+                try:
+                    data = await asyncio.wait_for(ws.receive_bytes(), timeout=0.01)
+                    print(f"📦 Bytes recibidos: {len(data)}")
+                    nparr = np.frombuffer(data, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    if frame is None:
+                        continue
+                except asyncio.TimeoutError:
+                    continue
+
             if frame is None:
                 continue
 
@@ -139,12 +164,20 @@ async def analyze(ws: WebSocket):
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 
+            # Delay pequeño si es stream
+            if stream_url and video_url:
+                await asyncio.sleep(0.03)
+
     except WebSocketDisconnect:
         print("Cliente desconectado")
     except Exception:
         import traceback; traceback.print_exc()
     finally:
         print("🛑 Handler WebSocket terminado.")
+        if cap:
+            cap.release()
+
+
 
 # ---------------------------------------------------
 # 11) Endpoints REST para control
@@ -193,14 +226,45 @@ async def update_config(payload: ConfigPayload):
 async def get_hardware_status():
     return hardware_status
 
+# ---------------------------------------------------
+# Endpoints Stream
+stream_url = False
+url = None
+video_url = None  # Aquí guardaremos la URL real del stream de YouTube
+
+def get_youtube_stream_url(youtube_link):
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'quiet': True,
+        'noplaylist': True,
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(youtube_link, download=False)
+        return info['url']
+
+
 @app.post("/upload-url/")
 async def upload_url(request: Request):
-    global stream_url, url
+    global stream_url, url, video_url
     data = await request.json()
-    stream_url = True if data.get("stream_url") else False
-    url = data.get("url")
+
+    stream_url = bool(data.get("stream_url"))  # por si viene como string
+    url = data.get("imageUrl")
+
+    if stream_url and url:
+        try:
+            video_url = get_youtube_stream_url(url)
+            print(f"URL de video obtenida: {video_url}")
+        except Exception as e:
+            print(f"Error al obtener stream de YouTube: {e}")
+            video_url = None
+    else:
+        video_url = None  # por si estás subiendo una imagen normal, no YouTube
+
     print(f"Stream URL: {stream_url}")
+    print(f"URL recibida: {url}")
     return {"status": "ok"}
+
 
 @app.post("/clear-url/")
 async def clear_url():

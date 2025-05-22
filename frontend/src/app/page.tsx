@@ -25,6 +25,7 @@ export default function DashboardPage() {
   const [detections, setDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
   const [selectedId, setSelectedId] = useState(null);
   const [hasGPU, setHasGPU] = useState<boolean>(true); // Por defecto asumimos que tiene GPU
+  const [isStreaming ,setStream]  = useState<boolean>(false);
 
 
   // Listar cámaras disponibles
@@ -163,8 +164,12 @@ export default function DashboardPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ imageUrl: url }),
+        body: JSON.stringify({ imageUrl: url,stream_url: true }),
       });
+      conectionWebSocket();
+      setVideoSrc(null);
+      setIsTracking(true);
+      setStream(true);
       if (!response.ok) {
         throw new Error("Error al enviar la URL al backend.");
       }
@@ -456,14 +461,14 @@ const handleZoom = async (id: number) => {
               className={styles.videoElement}
             />
           </>
-        ) : isCameraActive ? (
+        ) : isCameraActive || isStreaming ? (
           <video
             ref={videoRef}
             autoPlay
             muted
             className={styles.videoElement}
           />
-        ) : (
+        ) :( 
           <p className={styles.textVideoContainer}>
             Esperando fuente de video
           </p>

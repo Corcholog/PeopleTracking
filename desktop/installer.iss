@@ -1,4 +1,4 @@
-#define MyAppName    "PeopleTracking"
+#define MyAppName    "Followup"
 #define MyAppVersion "1.0.0"
 #define CUDA_URL "https://developer.download.nvidia.com/compute/cuda/12.9.0/network_installers/cuda_12.9.0_windows_network.exe"
 #define CUDA_TMPNAME "cuda_installer.exe"
@@ -17,6 +17,8 @@ PrivilegesRequired=admin
 AllowNoIcons=yes
 DiskSpanning=yes
 DiskSliceSize=max
+WizardImageFile=imagenes\banner.bmp
+WizardSmallImageFile=imagenes\logo.bmp
 
 [Files]
 ; — Archivos necesarios para la música (deben estar al principio)

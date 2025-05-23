@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
-export function useWebSocket({ url, onMessage, onStopped, autoConnect = false }: UseWebSocketOptions) {
+interface UseWebSocketOptions {
+  url: string;
+  onMessage?: (event: MessageEvent) => void;
+  onStopped?: () => void;
+}
+
+export function useWebSocket({ url, onMessage, onStopped}: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -39,7 +45,7 @@ export function useWebSocket({ url, onMessage, onStopped, autoConnect = false }:
         } else if (msg.type === "stopped") {
           onStopped?.();
         }
-      } catch (_) {
+      } catch {
         console.warn("Mensaje no parseable:", event.data);
       }
     }

@@ -28,7 +28,6 @@ export default function DashboardPage() {
 
 
 useEffect(() => {
-  let interval: NodeJS.Timeout;
 
   const checkBackendReady = async () => {
     try {
@@ -38,12 +37,12 @@ useEffect(() => {
         setisFirstReady(true);
         clearInterval(interval); // 🧼 Detiene el polling
       }
-    } catch (err) {
+    } catch  {
       console.log("⏳ Backend no disponible todavía");
     }
   };
 
-  interval = setInterval(checkBackendReady, 1000);
+  const interval = setInterval(checkBackendReady, 1000);
   checkBackendReady(); // 👈 Primer intento inmediato
 
   return () => clearInterval(interval);
@@ -53,14 +52,13 @@ useEffect(() => {
   const {
     send,
     waitUntilReady,
-    reset: resetSocket,
     isConnected,
     isReady,
     connect,
     ws,
   } = useWebSocket({
     url: "ws://localhost:8000/ws/analyze/",
-    onMessage: (evt) => {
+    onMessage: (evt: MessageEvent) => {
       if (typeof evt.data === "string") {
         const msg = JSON.parse(evt.data);
           if (msg.type === "lista_de_ids") {

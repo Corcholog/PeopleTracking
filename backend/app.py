@@ -39,6 +39,34 @@ warmup_cpu = False
 # ---------------------------------------------------
 hardware_status = {"gpu_available": False}
 
+#
+#
+#
+
+frame_counter = 0           # Cuenta frames recibidos
+results = {}                # Guarda resultados procesados {frame_id: resultado}
+next_frame_to_send = 1      # Próximo frame que debe enviarse en orden
+async def process_frame(frame, frame_id, current_id):
+    loop = asyncio.get_running_loop()
+    try:
+        frame_pred, tracks, center = await loop.run_in_executor(
+            executor, get_predict, frame, current_id
+        )
+        annotated = draw(frame_pred, tracks)
+        if center:
+            annotated = apply_zoom(annotated, center)
+        _, buf = cv2.imencode(".jpg", annotated)
+
+        # Guarda resultado
+        
+        results[frame_id] = {
+            "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+            "image": buf.tobytes()
+        }
+    except Exception as e:
+        print(f"Error en procesar frame {frame_id}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global warmup_gpu, warmup_cpu, hardware_status
@@ -97,14 +125,20 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 # ---------------------------------------------------
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
+    global frame_counter, next_frame_to_send, results
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
+    frame_counter = 0
+    next_frame_to_send = 1
+    results = {}
     print("✅ WebSocket aceptado")
     try:
         global current_id
         while True:
             data = await ws.receive_bytes()
             print(f"📦 Bytes recibidos: {len(data)}")
+            frame_counter += 1
+            current_frame_id = frame_counter
 
             # Decodifica JPEG
             nparr = np.frombuffer(data, np.uint8)
@@ -112,31 +146,23 @@ async def analyze(ws: WebSocket):
             if frame is None:
                 continue
 
-            # Procesa en background
-            loop = asyncio.get_running_loop()
-            try:
-                frame_pred, tracks, center = await loop.run_in_executor(
-                    executor, get_predict, frame, current_id
-                )
-            except Exception as e:
-                print("❌ Error en get_predict:", e)
-                continue
+            asyncio.create_task(process_frame(frame, current_frame_id, current_id))
+            
+            # Intentar enviar frames en orden
+            while next_frame_to_send in results:
+                res = results.pop(next_frame_to_send)
 
-            # Dibuja y zoom
-            annotated = draw(frame_pred, tracks)
-            if center:
-                annotated = apply_zoom(annotated, center)
+                # Envía lista de IDs
+                await ws.send_json({
+                    "type": "lista_de_ids",
+                    "detections": res["detections"],
+                    "selected_id": current_id
+                })
 
-            # Envía lista de IDs
-            await ws.send_json({
-                "type": "lista_de_ids",
-                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "selected_id": current_id
-            })
+                # Envía imagen anotada
+                await ws.send_bytes(res["image"])
 
-            # Envía imagen anotada
-            _, buf = cv2.imencode(".jpg", annotated)
-            await ws.send_bytes(buf.tobytes())
+                next_frame_to_send += 1
 
     except WebSocketDisconnect:
         print("Cliente desconectado")

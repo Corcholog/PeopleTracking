@@ -10,6 +10,8 @@ from ultralytics import YOLO
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 import torch
+import json
+from yt_dlp import YoutubeDL
 
 
 # 1) Detecta si está bundlado o en desarrollo
@@ -32,7 +34,9 @@ cpu_count = os.cpu_count() or 1
 executor = ThreadPoolExecutor(max_workers=cpu_count)
 warmup_gpu = False
 warmup_cpu = False
-
+ready = False
+stream_url = False
+url = False
 
 # ---------------------------------------------------
 # 7) FastAPI con lifespan para warm‑up
@@ -41,7 +45,7 @@ hardware_status = {"gpu_available": False}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global warmup_gpu, warmup_cpu, hardware_status
+    global warmup_gpu, warmup_cpu, hardware_status, ready
     if torch.cuda.is_available():
         set_gpu_usage(True)
         warmup_gpu = True
@@ -53,6 +57,7 @@ async def lifespan(app: FastAPI):
     dummy = np.zeros((480, 640, 3), np.uint8)
     _, _, _ = get_predict(dummy)
     print("✅ Modelo calentado")
+    ready = True
     yield
 
 
@@ -99,42 +104,71 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 async def analyze(ws: WebSocket):
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
-    print("✅ WebSocket aceptado")
     try:
-        global current_id
+        global current_id, video_url, stream_url
+        cap = None
         while True:
-            data = await ws.receive_bytes()
-            print(f"📦 Bytes recibidos: {len(data)}")
+            frame = None
+            ## parte agarrar video
+            if stream_url and video_url:
+                if cap is None:
+                    cap = cv2.VideoCapture(video_url)
+                    if not cap.isOpened():
+                        await ws.send_json({"type": "error", "message": "No se pudo abrir el stream"})
+                        print("❌ No se pudo abrir el stream")
+                        break
 
-            # Decodifica JPEG
-            nparr = np.frombuffer(data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                ret, frame = cap.read()
+                if not ret:
+                    print("❌ No se pudo leer el frame del stream")
+                    await asyncio.sleep(0.1)
+                    continue
+
+            else:
+                message = await ws.receive()
+
+                if message["type"] == "websocket.disconnect":
+                    print("Cliente desconectado")
+                    break
+
+                if message["type"] == "websocket.receive":
+                    if "text" in message:
+                        try:
+                            data = message["text"]
+                            parsed = json.loads(data)  # 👈 intentamos decodificar como JSON
+                            if isinstance(parsed, dict) and parsed.get("type") == "stop":
+                                print("🛑 Solicitud de detener recibida (JSON)")
+                                break
+                        except json.JSONDecodeError:
+                            if data.strip().lower() == "stop":
+                                print("🛑 Solicitud de detener recibida (texto plano)")
+                                break
+                    elif "bytes" in message:
+                        nparr = np.frombuffer(message["bytes"], np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is None:
+                            continue
             if frame is None:
                 continue
 
-            # Procesa en background
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
                     executor, get_predict, frame, current_id
-                )
+            )
             except Exception as e:
                 print("❌ Error en get_predict:", e)
                 continue
 
-            # Dibuja y zoom
             annotated = draw(frame_pred, tracks)
             if center:
                 annotated = apply_zoom(annotated, center)
 
-            # Envía lista de IDs
             await ws.send_json({
-                "type": "lista_de_ids",
-                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "selected_id": current_id
+                        "type": "lista_de_ids",
+                        "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                        "selected_id": current_id
             })
-
-            # Envía imagen anotada
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 
@@ -143,6 +177,11 @@ async def analyze(ws: WebSocket):
     except Exception:
         import traceback; traceback.print_exc()
     finally:
+        try:
+            await ws.send_json({"type": "stopped"})
+            await ws.close()
+        except:
+            pass
         print("🛑 Handler WebSocket terminado.")
 
 # ---------------------------------------------------
@@ -150,6 +189,8 @@ async def analyze(ws: WebSocket):
 # ---------------------------------------------------
 @app.post("/reset_model/")
 async def reset_model(request: Request):
+    global current_id
+    current_id = None
     reset()
     return {"status": "model reset"}
 
@@ -161,8 +202,8 @@ async def set_id(payload: IDPayload):
 
 @app.post("/clear_id/")
 async def clear_id():
-    global id
-    id = None
+    global current_id
+    current_id = None
     return {"status": "id cleared"}
 
 @app.post("/config/")
@@ -191,3 +232,54 @@ async def update_config(payload: ConfigPayload):
 @app.get("/hardware_status/")
 async def get_hardware_status():
     return hardware_status
+
+@app.get("/status/")
+async def get_status():
+    global ready
+    return {"ready": ready}
+# ---------------------------------------------------
+# Endpoints Stream
+stream_url = False
+url = None
+video_url = None  # Aquí guardaremos la URL real del stream de YouTube
+
+def get_youtube_stream_url(youtube_link):
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'quiet': True,
+        'noplaylist': True,
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(youtube_link, download=False)
+        return info['url']
+
+
+@app.post("/upload-url/")
+async def upload_url(request: Request):
+    global stream_url, url, video_url
+    data = await request.json()
+
+    stream_url = bool(data.get("stream_url"))  # por si viene como string
+    url = data.get("imageUrl")
+
+    if stream_url and url:
+        try:
+            video_url = get_youtube_stream_url(url)
+            print(f"URL de video obtenida: {video_url}")
+        except Exception as e:
+            print(f"Error al obtener stream de YouTube: {e}")
+            video_url = None
+    else:
+        video_url = None  # por si estás subiendo una imagen normal, no YouTube
+
+    print(f"Stream URL: {stream_url}")
+    print(f"URL recibida: {url}")
+    return {"status": "ok"}
+
+
+@app.post("/clear-url/")
+async def clear_url():
+    global stream_url, url
+    stream_url = False
+    url = False
+    return {"status": "ok"}

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ultralytics import YOLO
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
+from yt_dlp import YoutubeDL
 import torch
 import json
 from yt_dlp import YoutubeDL
@@ -86,7 +87,7 @@ class ConfigPayload(BaseModel):
 # 9) Utilidad de zoom (opcional)
 # ---------------------------------------------------
 def apply_zoom(frame, center, zoom_factor=1.5):
-    if center is None:
+    if center is None or current_id is None:
         return frame
     x, y = center
     h, w = frame.shape[:2]
@@ -99,6 +100,8 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 # ---------------------------------------------------
 # 10) Endpoint WebSocket para análisis
 # ---------------------------------------------------
+
+
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     await ws.accept()
@@ -122,7 +125,6 @@ async def analyze(ws: WebSocket):
                     print("❌ No se pudo leer el frame del stream")
                     await asyncio.sleep(0.1)
                     continue
-
             else:
                 message = await ws.receive()
 
@@ -171,6 +173,10 @@ async def analyze(ws: WebSocket):
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 
+            # Delay pequeño si es stream
+            if stream_url and video_url:
+                await asyncio.sleep(0.03)
+
     except WebSocketDisconnect:
         print("Cliente desconectado")
     except Exception:
@@ -182,6 +188,10 @@ async def analyze(ws: WebSocket):
         except:
             pass
         print("🛑 Handler WebSocket terminado.")
+        if cap:
+            cap.release()
+
+
 
 # ---------------------------------------------------
 # 11) Endpoints REST para control

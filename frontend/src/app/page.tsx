@@ -153,7 +153,6 @@ useEffect(() => {
     };
   }, [selectedDevice]);
 
-
 useEffect(() => {
   if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
   if (!isReady || !isConnected || !ws) return;
@@ -173,6 +172,31 @@ useEffect(() => {
 
   return () => clearInterval(intervalId);
 }, [isTracking, fpsLimit, isReady, isConnected, ws]);
+
+  // Cambiar fuente de video
+  const handleAddUrl = async () => {
+    const url = prompt("Ingresa la URL de la imagen:");
+    if (!url) return;
+    try {
+      const response = await fetch("http://localhost:8000/upload-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ imageUrl: url,stream_url: true }),
+      });
+      conectionWebSocket();
+      setVideoSrc(null);
+      setIsTracking(true);
+      setStream(true);
+      if (!response.ok) {
+        throw new Error("Error al enviar la URL al backend.");
+      }
+      const data = await response.json();
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     try {
@@ -286,7 +310,8 @@ const handleZoom = async (id: number) => {
   };
 
   const resetId = async () => {
-  await fetch("http://localhost:8000/clear_id/", {
+    setSelectedId(null);
+    await fetch("http://localhost:8000/clear_id/", {
     method: "POST",
   });
   setSelectedId("");
@@ -375,11 +400,13 @@ const handleZoom = async (id: number) => {
 
               {/* FPS */}
               {!isTracking && !isStopping && 
+
               <div className={styles.trackingOption}>
                 <label>FPS deseados:</label><br></br>
                 <input type="number" min="1" max="30" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
               </div>
               }
+
 
               {/* Porcentaje de confianza */}
               <div className={styles.trackingOption}>

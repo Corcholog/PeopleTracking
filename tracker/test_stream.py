@@ -4,6 +4,7 @@ import time
 from ultralytics import YOLO
 from track import SimpleTracker
 import logging
+from yt_dlp import YoutubeDL
 
 # Desactivar la salida de logs de la librería ultralytics
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
@@ -11,7 +12,27 @@ logging.getLogger('ultralytics').setLevel(logging.WARNING)
 # Modelo y tracker
 model = YOLO("yolov8n.pt", verbose=False)
 tracker = SimpleTracker()
-video_path = r'tracker\mall.mp4'
+
+# Extraer URL del stream de YouTube
+def get_youtube_stream_url(youtube_link):
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'quiet': True,
+        'noplaylist': True,
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(youtube_link, download=False)
+        return info['url']
+
+# Link del streaming de YouTube (usá uno real)
+youtube_link = "https://www.youtube.com/watch?v=DjdUEyjx8GM"
+video_url = get_youtube_stream_url(youtube_link)
+
+# Iniciar captura desde el stream
+cap = cv2.VideoCapture(video_url)
+start_time = time.time()
+show_only_id_3 = False
+show_all = True
 
 # Función principal de predicción
 def get_predict(frame, id=None):
@@ -44,18 +65,13 @@ def get_predict(frame, id=None):
 
     return frame, center
 
-# Iniciar video
-cap = cv2.VideoCapture(video_path)
-start_time = time.time()
-show_only_id_3 = False
-show_all = True
-
+# Loop principal
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        break
-
-    
+        print("No frame received. Reintentando...")
+        time.sleep(1)
+        continue
 
     id_filter = 3 if show_only_id_3 else None
     frame, center = get_predict(frame, id=id_filter)
@@ -63,9 +79,8 @@ while cap.isOpened():
     cv2.imshow("Tracker", frame)
 
     elapsed_time = time.time() - start_time
-    if not show_all:
-        if elapsed_time > 6.0:
-            show_only_id_3 = True
+    if not show_all and elapsed_time > 6.0:
+        show_only_id_3 = True
 
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break

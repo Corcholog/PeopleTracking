@@ -1,6 +1,6 @@
 {
-  "identifier": "com.agustin.peopletracking",
-  "productName": "PeopleTracking",
+  "identifier": "com.agustin.followup",
+  "productName": "Followup",
   "version": "1.0.0",
   "build": {
     "beforeDevCommand": "cd ../frontend && npm run dev",
@@ -14,7 +14,7 @@
     },
     "windows": [
       {
-        "title": "PeopleTracking",
+        "title": "Followup",
         "width": 800,
         "height": 600,
         "resizable": true,

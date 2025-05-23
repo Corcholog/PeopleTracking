@@ -275,3 +275,29 @@
 .hidden {
   display: none;
 }
+
+.trackingButton {
+  margin-right: 10px;
+  padding: 8px 12px;
+  font-weight: bold;
+  background-color: #1e1e2f;
+  border: 1px solid #888;
+  border-radius: 6px;
+  color: #f1f1f1;
+  cursor: pointer;
+}
+
+.trackingButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.waitingMessage {
+  margin-top: 6px;
+  font-style: italic;
+  color: #ffc107; /* amarillo visible */
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import ReconnectingWebSocket from "reconnecting-websocket";
 import styles from "./page.module.css";
+import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
+
 
 export default function DashboardPage() {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -10,22 +11,111 @@ export default function DashboardPage() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [processingUnit, setProcessingUnit] = useState("gpu");
-  const [fpsLimit, setFpsLimit] = useState(30);
+  const [fpsLimit, setFpsLimit] = useState(24);
   const [confidenceThreshold, setConfidenceThreshold] = useState(50);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const rawCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const annotatedCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wsRef = useRef<ReconnectingWebSocket | null>(null);
 
-  const [isReady, setIsReady] = useState(false);
   const [isFirstReady, setisFirstReady] = useState(false);
-
   const [detections, setDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
-  const [selectedId, setSelectedId] = useState(null);
-  const [hasGPU, setHasGPU] = useState<boolean>(true); // Por defecto asumimos que tiene GPU
+  const [selectedId, setSelectedId] = useState("");
+  const [hasGPU, setHasGPU] = useState<boolean>(true);
+  const [isStopping, setIsStopping] = useState(false);
   const [isStreaming ,setStream]  = useState<boolean>(false);
+
+
+useEffect(() => {
+  let interval: NodeJS.Timeout;
+
+  const checkBackendReady = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/status/");
+      const data = await res.json();
+      if (data.ready) {
+        setisFirstReady(true);
+        clearInterval(interval); // 🧼 Detiene el polling
+      }
+    } catch (err) {
+      console.log("⏳ Backend no disponible todavía");
+    }
+  };
+
+  interval = setInterval(checkBackendReady, 1000);
+  checkBackendReady(); // 👈 Primer intento inmediato
+
+  return () => clearInterval(interval);
+}, []);
+
+  // Nuevo uso del WebSocket
+  const {
+    send,
+    waitUntilReady,
+    reset: resetSocket,
+    isConnected,
+    isReady,
+    connect,
+    ws,
+  } = useWebSocket({
+    url: "ws://localhost:8000/ws/analyze/",
+    onMessage: (evt) => {
+      if (typeof evt.data === "string") {
+        const msg = JSON.parse(evt.data);
+          if (msg.type === "lista_de_ids") {
+          console.log("🔍 Detections recibidas:", msg.detections);
+          console.log("🎯 ID seleccionado:", msg.selected_id);
+
+          // Aca estan los datos
+          setDetections(msg.detections);
+          if(msg.selected_id == null)
+            setSelectedId("");
+        }
+      } else {
+        const bytes = new Uint8Array(evt.data as ArrayBuffer);
+        const blob = new Blob([bytes], { type: "image/jpeg" });
+        const img = new Image();
+        img.onload = () => {
+          const ctx = annotatedCanvasRef.current?.getContext("2d");
+          if (ctx && annotatedCanvasRef.current) {
+            annotatedCanvasRef.current.width = img.width;
+            annotatedCanvasRef.current.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(img.src);
+          }
+        };
+        img.src = URL.createObjectURL(blob);
+      }
+    },
+    onStopped: () => {
+    console.log("✅ Confirmado: análisis detenido");
+    setIsStopping(false);
+    setIsCameraActive(false);
+    setIsTracking(false);
+    setVideoSrc(null);
+    setSelectedDevice("");
+    setStream(false);
+    setDetections([]);
+  },
+  });
+
+    useEffect(() => {
+    const checkHardwareStatus = async () => {
+      try {
+        while (!isFirstReady) {
+      await new Promise(resolve => setTimeout(resolve, 100)); // espera 100ms
+    } 
+        const res = await fetch("http://localhost:8000/hardware_status/");
+        const data = await res.json();
+        setHasGPU(data.has_gpu);
+      } catch (error) {
+        console.error("Error al obtener el estado de hardware:", error);
+        setHasGPU(false);
+      }
+    };
+    checkHardwareStatus();
+  }, []);
 
 
   // Listar cámaras disponibles
@@ -65,94 +155,25 @@ export default function DashboardPage() {
     };
   }, [selectedDevice]);
 
-    // Iniciar WebSocket y esperar el “ready”
-  useEffect(() => {
-    const ws = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
-    ws.binaryType = "arraybuffer";  // recibir binarios :contentReference[oaicite:3]{index=3}
-    ws.onmessage = (evt) => {
-      if (typeof evt.data === "string") {
-        // Mensaje JSON: ready o errores
-        const msg = JSON.parse(evt.data);
-        if (msg.type === "ready") {
-          setIsReady(msg.status);
-          setisFirstReady(true);
-          const checkHardwareStatus = async () => {
-            try {
-              const res = await fetch("http://localhost:8000/hardware_status/");
-              const data = await res.json();
-              setHasGPU(data.has_gpu);
-            } catch (error) {
-              console.error("Error al obtener el estado de hardware:", error);
-              setHasGPU(false); // fallback
-            }
-          };
-      
-          checkHardwareStatus();
-          if (msg.status) {
-            wsRef.current = ws;
-          }
-        }
-      }
-    };
-    return () => ws.close();
-  }, []);
+useEffect(() => {
+  if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
+  if (!isReady || !isConnected || !ws) return;
 
-// WebSocket: enviar frames y recibir respuesta
-  useEffect(() => {
-    if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
-    conectionWebSocket();
-    const ws = wsRef.current!;
+  const intervalId = setInterval(() => {
+    const videoEl = videoRef.current!;
+    const canvas = rawCanvasRef.current!;
+    if (ws.readyState !== WebSocket.OPEN) return;
+    canvas.width = videoEl.videoWidth;
+    canvas.height = videoEl.videoHeight;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(videoEl, 0, 0);
+    canvas.toBlob((blob) => {
+      if (blob) send(blob);
+    }, "image/jpeg", 0.7);
+  }, 1000 / fpsLimit);
 
-    ws.onmessage = (evt) => {
-
-      if (typeof evt.data === "string") {
-        // Mensaje JSON: ready o errores
-        const msg = JSON.parse(evt.data);
-        if (msg.type === "lista_de_ids") {
-          console.log("🔍 Detections recibidas:", msg.detections);
-          console.log("🎯 ID seleccionado:", msg.selected_id);
-
-          // Aca estan los datos
-          setDetections(msg.detections);
-          setSelectedId(msg.selected_id);
-        }
-      }
-      else {
-        // Mensaje binario: ArrayBuffer
-        const bytes = new Uint8Array(evt.data as ArrayBuffer);
-        const blob = new Blob([bytes], { type: "image/jpeg" });
-        const img = new Image();
-        img.onload = () => {
-          if (!annotatedCanvasRef.current) return;
-          const ctx = annotatedCanvasRef.current.getContext("2d");
-          if (!ctx) return;
-          annotatedCanvasRef.current!.width = img.width;
-          annotatedCanvasRef.current!.height = img.height;
-          ctx.drawImage(img, 0, 0);
-          URL.revokeObjectURL(img.src);
-        };
-        img.src = URL.createObjectURL(blob);
-      }
-    };
-
-    const intervalId = setInterval(() => {
-      const videoEl = videoRef.current!;
-      const canvas = rawCanvasRef.current!;
-      if (ws.readyState !== WebSocket.OPEN) return;
-      canvas.width = videoEl.videoWidth;
-      canvas.height = videoEl.videoHeight;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(videoEl, 0, 0);
-      canvas.toBlob((blob) => {
-        if (blob) ws.send(blob);  // envía binario puro :contentReference[oaicite:4]{index=4}
-      }, "image/jpeg", 0.7);
-    }, 1000 / fpsLimit);
-
-    return () => {
-      window.clearInterval(intervalId);
-      wsRef.current?.close();
-    };
-  }, [isTracking, fpsLimit]); // se ejecuta cada vez que cambia isTracking o fpsLimit
+  return () => clearInterval(intervalId);
+}, [isTracking, fpsLimit, isReady, isConnected, ws]);
 
   // Cambiar fuente de video
   const handleAddUrl = async () => {
@@ -186,7 +207,6 @@ export default function DashboardPage() {
     } catch (err) {
         console.error("Todavia no cargo el backend:", err);
     }
-    conectionWebSocket();
     const file = event.target.files?.[0];
     if (file) {
       const videoUrl = URL.createObjectURL(file);
@@ -202,24 +222,26 @@ export default function DashboardPage() {
     resetId();
   };
 
-  const conectionWebSocket = () => {
-    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-      const ws = new ReconnectingWebSocket("ws://localhost:8000/ws/analyze/");
-      ws.binaryType = "arraybuffer";  // recibir binarios :contentReference[oaicite:3]{index=3}
-      ws.onmessage = (evt) => {
-        if (typeof evt.data === "string") {
-          // Mensaje JSON: ready o errores
-          const msg = JSON.parse(evt.data);
-          if (msg.type === "ready") {
-            setIsReady(msg.status);
-            if (msg.status) {
-              wsRef.current = ws;
-            }
-          }
-        }
+   const handleAddUrl = async () => {
+    const url = prompt("Ingresa la URL de la imagen:");
+    if (!url) return;
+    try {
+      const response = await fetch("http://localhost:8000/upload-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ imageUrl: url,stream_url: true }),
+      });
+      setStream(true);
+      if (!response.ok) {
+        throw new Error("Error al enviar la URL al backend.");
       }
+      handleStartTracking();
+    } catch (error) {
+      console.error(error);
     }
-  }
+  };
 
   const handleStartCamera = () => {
     try {
@@ -228,37 +250,53 @@ export default function DashboardPage() {
     } catch (err) {
         console.error("Todavia no cargo el backend:", err);
     }
-    conectionWebSocket();
     setVideoSrc(null);
     setIsCameraActive(true);
     setIsTracking(false);
   };
-
-  const handleStopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
+const handleStopCamera = () => {
+  if (videoRef.current?.srcObject) {
+    const stream = videoRef.current.srcObject as MediaStream;
+    stream.getTracks().forEach((track) => track.stop());
+  }
+ // Solo mandás "stop" si estás trackeando
+  if (isTracking) {
+    if(isStreaming) {
+      try {
+        fetch("http://localhost:8000/clear-url", { method: "POST" });
+      } catch (error) {
+        console.error(error);
+      }
     }
-    setIsCameraActive(false);
-    setIsTracking(false)
+    send(JSON.stringify({ type: "stop" }));
+    setIsStopping(true); // esperar el cierre
+    
+  } else {
+    // 🔧 Reset inmediato si no estás trackeando
     setVideoSrc(null);
+    setIsCameraActive(false);
     setSelectedDevice("");
-    setIsReady(false);
-  };
+    setSelectedId("");
+    setStream(false);
+  }
+  setDetections([]);
+  setIsTracking(false);
 
-  const handleStartTracking = () => {
+  
+};
 
+const handleStartTracking = async () => {
+  connect(); // abrís el socket acá
+  await waitUntilReady(); // esperás a que responda con “ready”
   setIsTracking(true);
   setVideoSrc(null);
   setIsCameraActive(true);
-
-  if (videoRef.current) {
-    videoRef.current.play().catch(error => {
-    console.error("Error al intentar reproducir el video:", error);
-    });
-  }
+  if (videoRef.current && (videoRef.current.srcObject || videoRef.current.src)) {
+  videoRef.current.play().catch(console.error);
+}
 };
 const handleZoom = async (id: number) => {
+  setSelectedId(id.toString());
   try {
     await fetch("http://localhost:8000/set_id/", {
       method: "POST",
@@ -270,6 +308,7 @@ const handleZoom = async (id: number) => {
   } catch (error) {
     console.error("Error al enviar ID al backend:", error);
   }
+
   };
 
   const resetId = async () => {
@@ -277,7 +316,7 @@ const handleZoom = async (id: number) => {
     await fetch("http://localhost:8000/clear_id/", {
     method: "POST",
   });
-  setSelectedId(null);
+  setSelectedId("");
   };
   useEffect(() => {
     const sendTrackingConfig = async () => {
@@ -327,29 +366,33 @@ const handleZoom = async (id: number) => {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {selectedId !== null && (
+              {!isStopping && selectedId !== "" && (
                 <button onClick={resetId}>
                   Quitar Zoom
                 </button>
               )}
-              {detections.map((det) => (
-                <button key={det.id} onClick={() => handleZoom(det.id)}>
-                  Zoom al ID {det.id}
-                </button>
-              ))}
+              {!isStopping && (
+                <>
+                  {detections.map((det) => (
+                    <button key={det.id} onClick={() => handleZoom(det.id)}>
+                      Zoom al ID {det.id}
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
           </details>
           <details className={styles.trackingDropdown}>
             <summary> Configuración tracking</summary>
             <div className={styles.optionsContainer}>
               {/* Unidad de procesamiento */}
-              {hasGPU && (
+              {!isTracking &&  !isStopping && hasGPU &&   (
               <div className={styles.trackingOption}>
                 <label>Unidad de procesamiento:</label><br></br>
                 <select
                   value={processingUnit}
                   onChange={(e) => setProcessingUnit(e.target.value)}
-                  disabled={isTracking}
+                  disabled={isTracking || isStopping}
                 >
                   <option value="gpu">GPU</option>
                   <option value="cpu">CPU</option>
@@ -358,13 +401,14 @@ const handleZoom = async (id: number) => {
               )}
 
               {/* FPS */}
-              {!isTracking && 
+              {!isTracking && !isStopping && 
+
               <div className={styles.trackingOption}>
                 <label>FPS deseados:</label><br></br>
                 <input type="number" min="1" max="30" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
               </div>
               }
-              
+
 
               {/* Porcentaje de confianza */}
               <div className={styles.trackingOption}>
@@ -385,6 +429,13 @@ const handleZoom = async (id: number) => {
       </button>
     )}
 
+    {!isFirstReady ? (
+      <main className={styles.main}>
+      <div className={styles.header}>
+      <h1 className={styles.title}>⏳ Cargando el programa…</h1>
+      </div>
+      </main>
+    ) : (
     <main className={styles.main}>
       <div className={styles.header}>
         <h1 className={styles.title}>Seleccionar fuente de imagen</h1>
@@ -403,28 +454,41 @@ const handleZoom = async (id: number) => {
             </>
           )}
 
-          {(videoSrc || isCameraActive) && (
+        {(videoSrc || isCameraActive) && (
             <>
-              <button onClick={handleStopCamera}>
+              <button
+                onClick={handleStopCamera}
+                disabled={isStopping}
+                className={styles.trackingButton}
+              >
                 Eliminar fuente de video
               </button>
-              {!isTracking && (
+
+              {!isTracking && !isStopping && (
                 <button
                   onClick={handleStartTracking}
-                  disabled={!isReady}
-                  className={!isReady ? styles.disabledButton : ""}
+                  className={styles.trackingButton}
                 >
-                  {isReady ? "Iniciar Tracking" : "Cargando tracker…"}
+                  Iniciar Tracking
                 </button>
+              )}
+
+              {isStopping && (
+                <div className={styles.waitingMessage}>
+                  ⏳ Esperando que se detenga el análisis...
+                </div>
               )}
             </>
           )}
+
+
 
           {isCameraActive && !videoSrc && !isTracking && (
             <select
               className={styles.selectCamera}
               onChange={(e) => setSelectedDevice(e.target.value)}
               value={selectedDevice}
+              disabled={isStopping} // 🔒 bloquea cuando estás esperando
             >
               <option value="">-- Seleccionar cámara --</option>
               {devices.map((d) => (
@@ -437,6 +501,7 @@ const handleZoom = async (id: number) => {
         </div>
       </div>
 
+          
       <div className={styles.videoContainer}>
         {videoSrc ? (
           <video
@@ -489,6 +554,7 @@ const handleZoom = async (id: number) => {
         style={{ display: "none" }}
       />
     </main>
+    )}
   </div>
 );
 }

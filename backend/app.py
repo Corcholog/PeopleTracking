@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from yt_dlp import YoutubeDL
 import torch
+import json
+from yt_dlp import YoutubeDL
 
 
 # 1) Detecta si está bundlado o en desarrollo
@@ -33,6 +35,7 @@ cpu_count = os.cpu_count() or 1
 executor = ThreadPoolExecutor(max_workers=cpu_count)
 warmup_gpu = False
 warmup_cpu = False
+ready = False
 stream_url = False
 url = False
 
@@ -43,7 +46,7 @@ hardware_status = {"gpu_available": False}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global warmup_gpu, warmup_cpu, hardware_status
+    global warmup_gpu, warmup_cpu, hardware_status, ready
     if torch.cuda.is_available():
         set_gpu_usage(True)
         warmup_gpu = True
@@ -55,6 +58,7 @@ async def lifespan(app: FastAPI):
     dummy = np.zeros((480, 640, 3), np.uint8)
     _, _, _ = get_predict(dummy)
     print("✅ Modelo calentado")
+    ready = True
     yield
 
 
@@ -103,14 +107,12 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 async def analyze(ws: WebSocket):
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
-    print("✅ WebSocket aceptado")
     try:
         global current_id, video_url, stream_url
         cap = None
-
         while True:
             frame = None
-
+            ## parte agarrar video
             if stream_url and video_url:
                 if cap is None:
                     cap = cv2.VideoCapture(video_url)
@@ -125,42 +127,50 @@ async def analyze(ws: WebSocket):
                     await asyncio.sleep(0.1)
                     continue
             else:
-                try:
-                    data = await asyncio.wait_for(ws.receive_bytes(), timeout=0.01)
-                    print(f"📦 Bytes recibidos: {len(data)}")
-                    nparr = np.frombuffer(data, np.uint8)
-                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                    if frame is None:
-                        continue
-                except asyncio.TimeoutError:
-                    continue
+                message = await ws.receive()
 
+                if message["type"] == "websocket.disconnect":
+                    print("Cliente desconectado")
+                    break
+
+                if message["type"] == "websocket.receive":
+                    if "text" in message:
+                        try:
+                            data = message["text"]
+                            parsed = json.loads(data)  # 👈 intentamos decodificar como JSON
+                            if isinstance(parsed, dict) and parsed.get("type") == "stop":
+                                print("🛑 Solicitud de detener recibida (JSON)")
+                                break
+                        except json.JSONDecodeError:
+                            if data.strip().lower() == "stop":
+                                print("🛑 Solicitud de detener recibida (texto plano)")
+                                break
+                    elif "bytes" in message:
+                        nparr = np.frombuffer(message["bytes"], np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is None:
+                            continue
             if frame is None:
                 continue
 
-            # Procesa en background
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
                     executor, get_predict, frame, current_id
-                )
+            )
             except Exception as e:
                 print("❌ Error en get_predict:", e)
                 continue
 
-            # Dibuja y zoom
             annotated = draw(frame_pred, tracks)
             if center:
                 annotated = apply_zoom(annotated, center)
 
-            # Envía lista de IDs
             await ws.send_json({
-                "type": "lista_de_ids",
-                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "selected_id": current_id
+                        "type": "lista_de_ids",
+                        "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                        "selected_id": current_id
             })
-
-            # Envía imagen anotada
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 
@@ -173,6 +183,11 @@ async def analyze(ws: WebSocket):
     except Exception:
         import traceback; traceback.print_exc()
     finally:
+        try:
+            await ws.send_json({"type": "stopped"})
+            await ws.close()
+        except:
+            pass
         print("🛑 Handler WebSocket terminado.")
         if cap:
             cap.release()
@@ -184,6 +199,8 @@ async def analyze(ws: WebSocket):
 # ---------------------------------------------------
 @app.post("/reset_model/")
 async def reset_model(request: Request):
+    global current_id
+    current_id = None
     reset()
     return {"status": "model reset"}
 
@@ -226,6 +243,10 @@ async def update_config(payload: ConfigPayload):
 async def get_hardware_status():
     return hardware_status
 
+@app.get("/status/")
+async def get_status():
+    global ready
+    return {"ready": ready}
 # ---------------------------------------------------
 # Endpoints Stream
 stream_url = False

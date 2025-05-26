@@ -37,3 +37,5 @@ tracker/venv/
 desktop/src-tauri/binaries/fastapi_server-x86_64-pc-windows-msvc.exe
 desktop/src-tauri/target/release/
 desktop/Output/
+
+.idea/

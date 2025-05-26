@@ -173,30 +173,6 @@ useEffect(() => {
   return () => clearInterval(intervalId);
 }, [isTracking, fpsLimit, isReady, isConnected, ws]);
 
-  // Cambiar fuente de video
-  const handleAddUrl = async () => {
-    const url = prompt("Ingresa la URL de la imagen:");
-    if (!url) return;
-    try {
-      const response = await fetch("http://localhost:8000/upload-url", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ imageUrl: url,stream_url: true }),
-      });
-      conectionWebSocket();
-      setVideoSrc(null);
-      setIsTracking(true);
-      setStream(true);
-      if (!response.ok) {
-        throw new Error("Error al enviar la URL al backend.");
-      }
-      const data = await response.json();
-    } catch (error) {
-      console.error(error);
-    }
-  };
 
   const handleVideoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     try {

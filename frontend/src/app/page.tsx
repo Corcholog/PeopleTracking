@@ -25,6 +25,8 @@ export default function DashboardPage() {
   const [hasGPU, setHasGPU] = useState<boolean>(true);
   const [isStopping, setIsStopping] = useState(false);
   const [isStreaming ,setStream]  = useState<boolean>(false);
+  const [selectedResolution, setSelectedResolution] = useState("1920x1080"); // Estado para resolución
+
 
 
 useEffect(() => {
@@ -131,9 +133,15 @@ useEffect(() => {
     if (!selectedDevice) return;
     let stream: MediaStream;
 
-    const constraints: MediaStreamConstraints = {
-      video: { deviceId: { exact: selectedDevice } },
-    };
+  const [width, height] = selectedResolution.split("x").map(Number);
+
+  const constraints: MediaStreamConstraints = {
+    video: {
+      deviceId: { exact: selectedDevice },
+      width,
+      height,
+    },
+  };
 
     (async () => {
       try {
@@ -151,7 +159,7 @@ useEffect(() => {
     return () => {
       if (stream) stream.getTracks().forEach((t) => t.stop());
     };
-  }, [selectedDevice]);
+  }, [selectedDevice,selectedResolution]);
 
 useEffect(() => {
   if (!isTracking || !videoRef.current || !rawCanvasRef.current || !annotatedCanvasRef.current) return;
@@ -197,7 +205,7 @@ useEffect(() => {
   };
 
    const handleAddUrl = async () => {
-    const url = prompt("Ingresa la URL de la imagen:");
+    const url = prompt("Ingresa la URL del Streaming:");
     if (!url) return;
     try {
       const response = await fetch("http://localhost:8000/upload-url", {
@@ -257,6 +265,30 @@ const handleStopCamera = () => {
   setIsTracking(false);
 
   
+};
+
+const handleResolutionChange = async (e) => {
+  setSelectedResolution(e.target.value)
+  console.log("entro al handle video change")
+  const newRes = e.target.value;
+  console.log(newRes)
+  setSelectedResolution(newRes);
+
+  if (isStreaming) {
+    // Llamada al backend para cambiar resolución
+    try {
+      const response = await fetch("http://localhost:8000/change_resolution", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ resolution: newRes }),
+      });
+      const data = await response.json();
+    } catch (error) {
+      console.error('Error cambiando resolución:', error);
+    }
+  }
 };
 
 const handleStartTracking = async () => {
@@ -334,16 +366,35 @@ const handleZoom = async (id: number) => {
     <div className={styles.layoutContainer}>
       {isSidebarOpen && (
         <div className={styles.sidebar}>
-          <button onClick={() => setIsSidebarOpen(false)} className={styles.collapseButton}>
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            className={styles.collapseButton}
+          >
             {"<"}
           </button>
+
+          {/* Nueva sección Selección de Resolución */}
+          <details className={styles.trackingDropdown}>
+            <summary>Selección de Resolución</summary>
+            <div className={styles.optionsContainer}>
+              <select
+                value={selectedResolution}
+                onChange={(e) =>(handleResolutionChange(e))}
+                disabled={isStopping} // Opcional: bloquear mientras está tracking
+                className={styles.selectCamera}
+              >
+                <option value="1920x1080">1920 x 1080</option>
+                <option value="1280x720">1280 x 720</option>
+                <option value="640x360">640 x 360</option>
+              </select>
+            </div>
+          </details>
+
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
               {!isStopping && selectedId !== "" && (
-                <button onClick={resetId}>
-                  Quitar Zoom
-                </button>
+                <button onClick={resetId}>Quitar Zoom</button>
               )}
               {!isStopping && (
                 <>
@@ -356,38 +407,52 @@ const handleZoom = async (id: number) => {
               )}
             </div>
           </details>
+
           <details className={styles.trackingDropdown}>
             <summary> Configuración tracking</summary>
             <div className={styles.optionsContainer}>
               {/* Unidad de procesamiento */}
-              {!isTracking &&  !isStopping && hasGPU &&   (
-              <div className={styles.trackingOption}>
-                <label>Unidad de procesamiento:</label><br></br>
-                <select
-                  value={processingUnit}
-                  onChange={(e) => setProcessingUnit(e.target.value)}
-                  disabled={isTracking || isStopping}
-                >
-                  <option value="gpu">GPU</option>
-                  <option value="cpu">CPU</option>
-                </select>
-              </div>
+              {!isTracking && !isStopping && hasGPU && (
+                <div className={styles.trackingOption}>
+                  <label>Unidad de procesamiento:</label>
+                  <br />
+                  <select
+                    value={processingUnit}
+                    onChange={(e) => setProcessingUnit(e.target.value)}
+                    disabled={isTracking || isStopping}
+                  >
+                    <option value="gpu">GPU</option>
+                    <option value="cpu">CPU</option>
+                  </select>
+                </div>
               )}
 
               {/* FPS */}
-              {!isTracking && !isStopping && 
-
-              <div className={styles.trackingOption}>
-                <label>FPS deseados:</label><br></br>
-                <input type="number" min="1" max="30" value={fpsLimit} onChange={(e) => setFpsLimit(Number(e.target.value))}/>
-              </div>
-              }
-
+              {!isTracking && !isStopping && (
+                <div className={styles.trackingOption}>
+                  <label>FPS deseados:</label>
+                  <br />
+                  <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={fpsLimit}
+                    onChange={(e) => setFpsLimit(Number(e.target.value))}
+                  />
+                </div>
+              )}
 
               {/* Porcentaje de confianza */}
               <div className={styles.trackingOption}>
-                <label>Porcentaje de confianza (%):</label><br></br>
-                <input type="number" min="0" max="100" value={confidenceThreshold} onChange={(e) => setConfidenceThreshold(Number(e.target.value))}/>
+                <label>Porcentaje de confianza (%):</label>
+                <br />
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={confidenceThreshold}
+                  onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
+                />
               </div>
             </div>
           </details>
@@ -395,13 +460,10 @@ const handleZoom = async (id: number) => {
       )}
 
       {!isSidebarOpen && (
-      <button
-        onClick={() => setIsSidebarOpen(true)}
-        className={styles.expandButton}
-      >
-        {">"}
-      </button>
-    )}
+        <button onClick={() => setIsSidebarOpen(true)} className={styles.expandButton}>
+          {">"}
+        </button>
+      )}
 
     {!isFirstReady ? (
       <main className={styles.main}>

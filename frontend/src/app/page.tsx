@@ -132,14 +132,17 @@ useEffect(() => {
   useEffect(() => {
     if (!selectedDevice) return;
     let stream: MediaStream;
-
+   
   const [width, height] = selectedResolution.split("x").map(Number);
+  console.log("entro aca y con valores de")
+  console.log(width)
+  console.log(height)
 
   const constraints: MediaStreamConstraints = {
     video: {
       deviceId: { exact: selectedDevice },
-      width,
-      height,
+      width: { ideal: width },
+      height: { ideal: height },
     },
   };
 
@@ -268,14 +271,10 @@ const handleStopCamera = () => {
 };
 
 const handleResolutionChange = async (e) => {
-  setSelectedResolution(e.target.value)
-  console.log("entro al handle video change")
-  const newRes = e.target.value;
-  console.log(newRes)
-  setSelectedResolution(newRes);
-
+  const newRes = e.target.value
+  setSelectedResolution(newRes)
   if (isStreaming) {
-    // Llamada al backend para cambiar resolución
+  // Llamada al backend para cambiar resolución
     try {
       const response = await fetch("http://localhost:8000/change_resolution", {
         method: "POST",
@@ -284,11 +283,11 @@ const handleResolutionChange = async (e) => {
         },
         body: JSON.stringify({ resolution: newRes }),
       });
-      const data = await response.json();
+      const data = await response.json();  
     } catch (error) {
-      console.error('Error cambiando resolución:', error);
+    console.error('Error cambiando resolución:', error);
     }
-  }
+ }
 };
 
 const handleStartTracking = async () => {
@@ -379,7 +378,7 @@ const handleZoom = async (id: number) => {
             <div className={styles.optionsContainer}>
               <select
                 value={selectedResolution}
-                onChange={(e) =>(handleResolutionChange(e))}
+                onChange={(e) =>(handleResolutionChange(e))} 
                 disabled={isStopping} // Opcional: bloquear mientras está tracking
                 className={styles.selectCamera}
               >

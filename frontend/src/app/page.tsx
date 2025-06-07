@@ -1,7 +1,7 @@
 "use client";
+import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
 import { useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
-import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
 
 
 export default function DashboardPage() {
@@ -27,6 +27,8 @@ export default function DashboardPage() {
   const [isStreaming ,setStream]  = useState<boolean>(false);
   const [selectedResolution, setSelectedResolution] = useState("1920x1080"); // Estado para resolución
 
+
+  const [isRecording, setIsRecording] = useState(false);
 
 
 useEffect(() => {
@@ -236,36 +238,75 @@ useEffect(() => {
     setIsCameraActive(true);
     setIsTracking(false);
   };
-const handleStopCamera = () => {
+
+const handleStopCamera = async () => {
   if (videoRef.current?.srcObject) {
     const stream = videoRef.current.srcObject as MediaStream;
     stream.getTracks().forEach((track) => track.stop());
   }
- // Solo mandás "stop" si estás trackeando
+
   if (isTracking) {
-    if(isStreaming) {
+    if (isRecording) {
+      await downloadRecording(); // 🧠 usamos la función aparte
+    }
+
+    if (isStreaming) {
       try {
-        fetch("http://localhost:8000/clear-url", { method: "POST" });
+        await fetch("http://localhost:8000/clear-url", { method: "POST" });
       } catch (error) {
         console.error(error);
       }
     }
+
     send(JSON.stringify({ type: "stop" }));
-    setIsStopping(true); // esperar el cierre
-    
+    setIsStopping(true);
   } else {
-    // 🔧 Reset inmediato si no estás trackeando
     setVideoSrc(null);
     setIsCameraActive(false);
     setSelectedDevice("");
     setSelectedId("");
     setStream(false);
   }
+
   setDetections([]);
   setIsTracking(false);
-
-  
 };
+
+
+const downloadRecording = async () => {
+  try {
+    const response = await fetch("http://localhost:8000/stop_recording/", {
+      method: "POST",
+    });
+
+    if (!response.ok)
+      throw new Error("Fallo al detener la grabación");
+
+    setIsRecording(false);
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+    const filename = `grabacion-${timestamp}.mp4`;
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    console.log("🎥 Grabación descargada como:", filename);
+  } catch (error) {
+    console.error("Error al descargar grabación:", error);
+  }
+};
+
+
 
 const handleResolutionChange = async (e) => {
   setSelectedResolution(e.target.value)
@@ -301,6 +342,22 @@ const handleStartTracking = async () => {
   videoRef.current.play().catch(console.error);
 }
 };
+
+const handleStartRecording = async () => {
+  try {
+    const response = await fetch("http://localhost:8000/start_recording/", {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error("Fallo en el backend");
+    }
+    setIsRecording(true);
+    console.log("🎥 Grabación iniciada");
+  } catch (error) {
+    console.error("Error al iniciar la grabación:", error);
+  }
+};
+
 const handleZoom = async (id: number) => {
   setSelectedId(id.toString());
   try {
@@ -499,6 +556,25 @@ const handleZoom = async (id: number) => {
               >
                 Eliminar fuente de video
               </button>
+              {isTracking && !isStopping && !isRecording && (
+                <button
+                  onClick={handleStartRecording}
+                  disabled={isStopping}
+                  className={styles.trackingButton}
+                >
+                  Iniciar Grabacion
+                </button>
+              )}
+
+              {isTracking && !isStopping && isRecording &&(
+                <button
+                  onClick={downloadRecording}
+                  disabled={isStopping}
+                  className={styles.trackingButton}
+                >
+                  Detener Grabacion
+                </button>
+              )}
 
               {!isTracking && !isStopping && (
                 <button

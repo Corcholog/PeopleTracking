@@ -1,8 +1,7 @@
 FROM node:22.14-alpine
 
 WORKDIR /app
-COPY ../../frontend/package*.json ./
-RUN npm install
+# Hacer COPY para producción, para desarrollo dejar el Dockerfile de esta manera
 
 EXPOSE 3000
 

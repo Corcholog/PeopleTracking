@@ -31,6 +31,8 @@ __pycache__/
 
 tracker/venv/
 
+.mp4
+
 .venv/
 
 #desktop

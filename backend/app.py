@@ -42,9 +42,9 @@ ready = False
 stream_url = False
 url = False
 
-# ---------------------------------------------------
+# --------------------------------------------------
 # 7) FastAPI con lifespan para warm‑up
-# ---------------------------------------------------
+# --------------------------------------------------
 hardware_status = {"gpu_available": False}
 
 # Other global variables

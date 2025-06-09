@@ -13,9 +13,6 @@ from yt_dlp import YoutubeDL
 import torch
 import json
 from yt_dlp import YoutubeDL
-from datetime import datetime
-from fastapi.responses import FileResponse
-from fastapi.responses import JSONResponse
 
 
 # 1) Detecta si está bundlado o en desarrollo
@@ -46,11 +43,6 @@ url = False
 # 7) FastAPI con lifespan para warm‑up
 # ---------------------------------------------------
 hardware_status = {"gpu_available": False}
-
-# Other global variables
-is_recording = False
-recording_filename = None
-recording_ready = False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -112,27 +104,10 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
-    def init_video_writer(frame):
-        nonlocal video_writer
-        global recording_filename
-        height, width = frame.shape[:2]
-        fps = 20  # valor por defecto si no viene de stream, tengo que ver la manera que sepa los fps en back
-        if cap:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 20
-
-        timestamp = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-        filename = f"recording-{timestamp}.mp4"
-        recording_filename = filename
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_writer = cv2.VideoWriter(filename, fourcc, fps, (width, height))
-        print(f"🎥 Grabando video en: {filename}")
-
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
     try:
-        video_writer = None
-        global current_id, video_url, stream_url, is_recording, recording_ready
+        global current_id, video_url, stream_url
         cap = None
         while True:
             frame = None
@@ -176,8 +151,7 @@ async def analyze(ws: WebSocket):
                             continue
             if frame is None:
                 continue
-            if is_recording and video_writer is None:
-                init_video_writer(frame)
+
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
@@ -188,16 +162,7 @@ async def analyze(ws: WebSocket):
                 continue
 
             annotated = draw(frame_pred, tracks)
-            if is_recording and video_writer is not None:
-                video_writer.write(annotated)
-            
-            if not is_recording and video_writer is not None:
-                video_writer.release()
-                recording_ready = True
-                video_writer = None
-                print("💾 Grabación finalizada sin detener el tracking.")
-
-            if center: # Hay que ver si grabamos el zoom o no
+            if center:
                 annotated = apply_zoom(annotated, center)
 
             await ws.send_json({
@@ -281,34 +246,6 @@ async def get_hardware_status():
 async def get_status():
     global ready
     return {"ready": ready}
-
-@app.post("/start_recording/")
-async def start_recording():
-    global is_recording
-    is_recording = True
-    return {"status": "recording started"}
-
-@app.post("/stop_recording/")
-async def stop_recording():
-    global is_recording, recording_filename, recording_ready
-    is_recording = False
-
-    for _ in range(50):  # Espera máx. ~5 segundos
-        if recording_ready:
-            break
-        await asyncio.sleep(0.1)
-
-    if recording_filename and os.path.exists(recording_filename):
-        filename_to_send = recording_filename
-        recording_filename = None
-        recording_ready = False  # Reset
-        return FileResponse(
-            path=filename_to_send,
-            media_type="video/mp4",
-            filename=os.path.basename(filename_to_send)
-        )
-
-    return JSONResponse(status_code=404, content={"error": "No recording found"})
 # ---------------------------------------------------
 # Endpoints Stream
 stream_url = False

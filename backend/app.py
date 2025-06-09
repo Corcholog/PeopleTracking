@@ -315,15 +315,41 @@ stream_url = False
 url = None
 video_url = None  # Aquí guardaremos la URL real del stream de YouTube
 
-def get_youtube_stream_url(youtube_link):
+def get_youtube_stream_url(youtube_link, max_height=None):
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',
         'quiet': True,
         'noplaylist': True,
+        'skip_download': True,
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(youtube_link, download=False)
-        return info['url']
+        formats = info.get('formats', [])
+
+        if max_height is not None:
+            # Filtrar formatos con video y url donde la altura sea menor o igual a max_height
+            filtered_videos = [
+                f for f in formats
+                if f.get('height') and f['height'] <= max_height
+                   and f.get('vcodec') and f['vcodec'] != 'none'
+                   and f.get('url')
+            ]
+            if filtered_videos:
+                best_video = max(filtered_videos, key=lambda f: f['height'])
+                return best_video['url']
+            else:
+                # Si no encontró ninguno que cumpla, devolver el mejor formato mp4 sin filtro
+                best_video = ydl.prepare_filename(info)
+                # Alternativamente, devolver el URL sin filtrar (ejemplo: el mejor disponible)
+                return info.get('url')
+        else:
+            # Si no se especificó max_height, devolvemos la mejor calidad mp4 disponible
+            # O fallback a la URL del video directamente
+            for f in formats:
+                if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
+                    return f['url']
+            return info.get('url')
+
+
 
 
 @app.post("/upload-url/")
@@ -333,10 +359,18 @@ async def upload_url(request: Request):
 
     stream_url = bool(data.get("stream_url"))  # por si viene como string
     url = data.get("imageUrl")
+    resolution = data.get("resolution")
 
     if stream_url and url:
         try:
-            video_url = get_youtube_stream_url(url)
+            max_height = None
+            if resolution:
+                try:
+                    max_height = int(resolution.split("x")[1])
+                except Exception:
+                    max_height = None
+
+            video_url = get_youtube_stream_url(url, max_height)
             print(f"URL de video obtenida: {video_url}")
         except Exception as e:
             print(f"Error al obtener stream de YouTube: {e}")
@@ -345,54 +379,7 @@ async def upload_url(request: Request):
         video_url = None  # por si estás subiendo una imagen normal, no YouTube
 
     print(f"Stream URL: {stream_url}")
-    print(f"URL recibida: {url}")
-    return {"status": "ok"}
-
-
-
-class ResolutionRequest(BaseModel):
-    resolution: str  # Ej: "1920x1080"
-
-@app.post("/change_resolution")
-async def change_resolution(req: ResolutionRequest):
-    try:
-        requested_height = int(req.resolution.split("x")[1])
-        print(f"Requested max height: {requested_height}")
-    except Exception:
-        requested_height = None
-        print("Error al obtener la resolución solicitada")
-
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-    }
-
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-
-    formats = info.get("formats", [])
-
-    # Filtrar formatos con video y url donde la altura sea menor o igual a la solicitada
-    filtered_videos = [
-        f for f in formats
-        if f.get("height") and f["height"] <= requested_height
-           and f.get("vcodec") and f["vcodec"] != "none"
-           and f.get("url")
-    ]
-
-    if filtered_videos:
-        # Elegir el formato con mayor altura que cumpla la condición (más cerca de la solicitada)
-        best_video = max(filtered_videos, key=lambda f: f["height"])
-        stream_url = best_video["url"]
-        print(f"url de antes{stream_url}")
-        stream_url = get_youtube_stream_url(stream_url)
-        print(f"Stream seleccionado con altura: {best_video['height']}")
-        print(stream_url)
-
-    return {
-        "message": f"Stream de video para resolución solicitada <= {req.resolution}",
-        "stream_url": stream_url,
-    }
+    return {"status": "ok", "video_url": video_url}
 
 @app.post("/clear-url/")
 async def clear_url():

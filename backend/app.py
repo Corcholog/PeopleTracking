@@ -16,7 +16,7 @@ from yt_dlp import YoutubeDL
 from datetime import datetime
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
-
+from fastapi import BackgroundTasks
 
 # 1) Detecta si está bundlado o en desarrollo
 if getattr(sys, 'frozen', False):
@@ -289,7 +289,7 @@ async def start_recording():
     return {"status": "recording started"}
 
 @app.post("/stop_recording/")
-async def stop_recording():
+async def stop_recording(background_tasks: BackgroundTasks):
     global is_recording, recording_filename, recording_ready
     is_recording = False
 
@@ -302,10 +302,14 @@ async def stop_recording():
         filename_to_send = recording_filename
         recording_filename = None
         recording_ready = False  # Reset
+
+        background_tasks.add_task(os.remove, filename_to_send)
+
         return FileResponse(
             path=filename_to_send,
             media_type="video/mp4",
-            filename=os.path.basename(filename_to_send)
+            filename=os.path.basename(filename_to_send),
+            background=background_tasks
         )
 
     return JSONResponse(status_code=404, content={"error": "No recording found"})

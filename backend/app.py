@@ -41,6 +41,7 @@ warmup_cpu = False
 ready = False
 stream_url = False
 url = False
+fps_default = 24
 
 # --------------------------------------------------
 # 7) FastAPI con lifespan para warm‑up
@@ -82,7 +83,7 @@ app.add_middleware(
 # 8) Estado compartido
 # ---------------------------------------------------
 current_id = None
-config_state = {"confidence_threshold": 0.5, "gpu": True}
+config_state = {"confidence_threshold": 0.5, "gpu": True, "fps": fps_default}
 
 class IDPayload(BaseModel):
     id: int
@@ -90,6 +91,7 @@ class IDPayload(BaseModel):
 class ConfigPayload(BaseModel):
     confidence: float = 0.5
     gpu: bool = False
+    fps: int = fps_default
 
 # ---------------------------------------------------
 # 9) Utilidad de zoom (opcional)
@@ -114,18 +116,23 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 async def analyze(ws: WebSocket):
     def init_video_writer(frame):
         nonlocal video_writer
-        global recording_filename
+        global recording_filename, config_state
         height, width = frame.shape[:2]
-        fps = 20  # valor por defecto si no viene de stream, tengo que ver la manera que sepa los fps en back
+        default_fps = config_state.get("fps", 20) 
+        stream_fps = None
         if cap:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 20
+            stream_fps = cap.get(cv2.CAP_PROP_FPS)
+            if stream_fps and stream_fps > 1:
+                # Se compara si el usuario quiere más fps de los que el stream permite
+                if default_fps > stream_fps:
+                    default_fps = stream_fps
 
         timestamp = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
         filename = f"recording-{timestamp}.mp4"
         recording_filename = filename
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_writer = cv2.VideoWriter(filename, fourcc, fps, (width, height))
+        video_writer = cv2.VideoWriter(filename, fourcc, default_fps, (width, height))
         print(f"🎥 Grabando video en: {filename}")
 
     await ws.accept()
@@ -270,6 +277,9 @@ async def update_config(payload: ConfigPayload):
                 warmup_cpu = True
                 warmup_gpu = False
         config_state["gpu"] = payload.gpu
+    if payload.fps is not None:
+        config_state["fps"] = payload.fps
+        print(f"[CONFIG] FPS set to: {payload.fps}")
     print(f"[CONFIG] {config_state}")
     return {"status": "ok", "new_state": config_state}
 

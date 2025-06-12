@@ -31,7 +31,7 @@ __pycache__/
 
 tracker/venv/
 
-.mp4
+*.mp4
 
 .venv/
 

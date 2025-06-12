@@ -400,6 +400,7 @@ export default function DashboardPage() {
       const config = {
         confidence: confidenceThreshold / 100,
         gpu: processingUnit === "gpu",
+        fps: fpsLimit,
       };
 
       try {
@@ -428,6 +429,32 @@ export default function DashboardPage() {
   }, [processingUnit, confidenceThreshold]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Cambio de FPSs
+  useEffect(() => {
+    const updateFpsSetting = async () => {
+      if (isTracking) {
+        console.warn("No se puede cambiar FPS mientras se está trackeando");
+        return;
+      }
+
+      try {
+        await fetch("http://localhost:8000/config/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ fps: fpsLimit }),
+        });
+        console.log(`FPS actualizado a ${fpsLimit}`);
+      } catch (err) {
+        console.error("Error al actualizar FPS:", err);
+      }
+    };
+
+    updateFpsSetting();
+  }, [fpsLimit]);
+
 
   return (
     <div className={styles.layoutContainer}>

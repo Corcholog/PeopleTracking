@@ -219,7 +219,7 @@ export default function DashboardPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ imageUrl: url, stream_url: true }),
+        body: JSON.stringify({ imageUrl: url, stream_url: true, resolution: selectedResolution }),
       });
       setStream(true);
       if (!response.ok) {
@@ -319,25 +319,6 @@ export default function DashboardPage() {
     console.log(newRes);
     setSelectedResolution(newRes);
     console.log("Device: " + selectedDevice);
-
-    if (isStreaming) {
-      // Llamada al backend para cambiar resolución
-      try {
-        const response = await fetch(
-          "http://localhost:8000/change_resolution",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ resolution: newRes }),
-          }
-        );
-        const data = await response.json();
-      } catch (error) {
-        console.error("Error cambiando resolución:", error);
-      }
-    }
   };
 
   const handleStartTracking = async () => {
@@ -439,6 +420,9 @@ export default function DashboardPage() {
       }
 
       try {
+        while (!isFirstReady) {
+          await new Promise((resolve) => setTimeout(resolve, 100)); // espera 100ms
+        }
         await fetch("http://localhost:8000/config/", {
           method: "POST",
           headers: {
@@ -474,12 +458,17 @@ export default function DashboardPage() {
               <select
                 value={selectedResolution}
                 onChange={(e) => handleResolutionChange(e)}
-                disabled={isStopping} // Opcional: bloquear mientras está tracking
+                disabled={isTracking || isStopping} // Opcional: bloquear mientras está tracking
                 className={styles.selectCamera}
               >
+                <option value="4k">3840 x 2160</option>
+                <option value="2k">2560 x 1440 </option>
                 <option value="1920x1080">1920 x 1080</option>
                 <option value="1280x720">1280 x 720</option>
+                <option value="854x480">854 x 480</option>
                 <option value="640x360">640 x 360</option>
+                <option value="320x240">320 x 240</option>
+                <option value="256x144">256 x 144</option>
               </select>
             </div>
           </details>

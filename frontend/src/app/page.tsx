@@ -2,6 +2,9 @@
 import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
 import { useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile  } from '@tauri-apps/plugin-fs';
+
 
 export default function DashboardPage() {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -276,49 +279,59 @@ export default function DashboardPage() {
     setIsTracking(false);
   };
 
-  const downloadRecording = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/stop_recording/", {
-        method: "POST",
-      });
+const downloadRecording = async () => {
+  try {
+    const response = await fetch("http://localhost:8000/stop_recording/", {
+      method: "POST",
+    });
 
-      if (!response.ok) throw new Error("Fallo al detener la grabación");
+    if (!response.ok) throw new Error("Fallo al detener la grabación");
+    setIsRecording(false);
 
-      setIsRecording(false);
+    const blob = await response.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
+      now.getDate()
+    )}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(
+      now.getSeconds()
+    )}`;
+    const defaultFilename = `grabacion-${timestamp}.mp4`;
 
-      const now = new Date();
-      const pad = (n: number) => n.toString().padStart(2, "0");
-      const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-        now.getDate()
-      )}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(
-        now.getSeconds()
-      )}`;
-      const filename = `grabacion-${timestamp}.mp4`;
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{ name: "Video", extensions: ["mp4"] }],
+    });
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      console.log("🎥 Grabación descargada como:", filename);
-    } catch (error) {
-      console.error("Error al descargar grabación:", error);
+    if (!filePath) {
+      console.log("El usuario canceló el guardado.");
+      return;
     }
-  };
 
-  const handleResolutionChange = async (e) => {
-    setSelectedResolution(e.target.value);
-    console.log("entro al handle video change");
+    await writeFile(filePath, uint8Array);
+
+
+    console.log("Archivo guardado exitosamente:", filePath);
+
+  } catch (err) {
+    console.error('Error al descargar grabación:', err);
+  }
+};
+
+
+
+
+  const handleResolutionChange = async (
+    e: React.ChangeEvent<HTMLSelectElement>
+  ): Promise<void> => {
+
     const newRes = e.target.value;
-    console.log(newRes);
     setSelectedResolution(newRes);
-    console.log("Device: " + selectedDevice);
+    console.log("entro al handle video change", newRes);
+
   };
 
   const handleStartTracking = async () => {
@@ -366,7 +379,7 @@ export default function DashboardPage() {
   };
 
   const resetId = async () => {
-    setSelectedId(null);
+    setSelectedId("");
     await fetch("http://localhost:8000/clear_id/", {
       method: "POST",
     });

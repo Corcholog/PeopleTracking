@@ -4,17 +4,23 @@ use std::sync::Mutex;
 use tauri::{Builder, Manager, State, WindowEvent};
 use tauri_plugin_shellx::{ShellExt, process::{CommandEvent, CommandChild}};
 use std::process::Command;
+use tauri_plugin_fs::FsExt;
+use tauri_plugin_dialog::DialogExt;
 struct AppState {
   _backend: Mutex<Option<CommandChild>>,
 }
 
 fn main() {
   Builder::default()
+    .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_shellx::init(true))
     .manage(AppState {
       _backend: Mutex::new(None),
     })
     .setup(|app| {
+      let scope = app.fs_scope();
+      scope.allow_directory("$DOWNLOAD", true);
       let sidecar = app.shell().sidecar("fastapi_server")
         .expect("Sidecar no configurado en externalBin");
 

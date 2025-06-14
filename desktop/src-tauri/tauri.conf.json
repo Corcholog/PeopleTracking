@@ -10,7 +10,21 @@
   },
   "app": {
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "my-capability",
+          "description": "My application capability used for all windows",
+          "windows": ["*"],
+          "permissions": [
+              "core:default",
+              "dialog:allow-open",
+              "dialog:allow-save",
+              "fs:default",
+              "fs:allow-download-write-recursive"
+            ]
+        }
+      ]
     },
     "windows": [
       {

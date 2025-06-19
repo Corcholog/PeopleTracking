@@ -18,6 +18,8 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks
 
+
+
 # 1) Detecta si está bundlado o en desarrollo
 if getattr(sys, 'frozen', False):
     base_dir = sys._MEIPASS
@@ -107,9 +109,26 @@ def apply_zoom(frame, center, zoom_factor=1.5):
     crop = frame[y1:y2, x1:x2]
     return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
 
+
+
+
+
 # ---------------------------------------------------
 # 10) Endpoint WebSocket para análisis
 # ---------------------------------------------------
+
+# ---------------------------------------------------
+#  escribir en archivo para  metricas generales
+# ---------------------------------------------------
+
+#esta variable es para las metricas generales del path del archivo que cuando se cree tendrá que setearse esta hardcodeada 
+tracking_log_path = "detecciones.txt"
+def escribirArchivo(cap,tracks):
+    frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) if cap else 0
+    with open(tracking_log_path, "a") as f:
+        for t in tracks:
+            x1, y1, x2, y2 = t.bbox
+            f.write(f"{t.track_id}, {frame_number}, ({x1}, {x2}, {y1}, {y2})\n")
 
 
 @app.websocket("/ws/analyze/")
@@ -212,6 +231,7 @@ async def analyze(ws: WebSocket):
                         "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
                         "selected_id": current_id
             })
+            escribirArchivo(cap,tracks)
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 

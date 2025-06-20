@@ -121,13 +121,35 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 #  escribir en archivo para  metricas generales
 # ---------------------------------------------------
 
-#esta variable es para las metricas generales del path del archivo que cuando se cree tendrá que setearse esta hardcodeada 
-tracking_log_path = "detecciones.txt"
-def escribirArchivo(frame_number,tracks):
-    with open(tracking_log_path, "a") as f:
+tracking_counter = 0  # Contador de trackeos realizados
+current_tracking_id = None
+current_tracking_filename = None
+
+# Función mejorada para generar nombres de archivo únicos
+def generate_tracking_filename():
+    global tracking_counter, current_tracking_id
+    tracking_counter += 1
+    timestamp = datetime.now().strftime("%d-%m-%Y-%H-%M")
+    tracking_id = f"Trackeo-{tracking_counter}"
+    current_tracking_id = tracking_id
+    filename = f"{timestamp}-{tracking_id}.txt"
+    return filename
+
+# Función mejorada para escribir archivo con header
+def escribirArchivo(frame_number, tracks):
+    global current_tracking_filename
+    
+    # Si es el primer frame, crear el archivo con header
+    if frame_number == 1:
+        current_tracking_filename = generate_tracking_filename()
+        with open(current_tracking_filename, "w") as f:
+            f.write("idPersona,idFrame,x1,x2,y1,y2\n")
+    
+    # Escribir los datos de tracking
+    with open(current_tracking_filename, "a") as f:
         for t in tracks:
             x1, y1, x2, y2 = t.bbox
-            f.write(f"{t.track_id}, {frame_number}, ({x1}, {x2}, {y1}, {y2})\n")
+            f.write(f"{t.track_id},{frame_number},{x1},{x2},{y1},{y2}\n")
 
 def getDirections(tracking_log_path, output_path):
     dataset = np.loadtxt(tracking_log_path, delimiter=',', dtype=float, skiprows=1)
@@ -279,6 +301,7 @@ async def analyze(ws: WebSocket):
                 video_writer.release()
                 recording_ready = True
                 video_writer = None
+                frame_number = 1
                 print("💾 Grabación finalizada sin detener el tracking.")
 
             if center: # Hay que ver si grabamos el zoom o no
@@ -289,7 +312,7 @@ async def analyze(ws: WebSocket):
                         "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
                         "selected_id": current_id
             })
-            
+
             if is_recording:
                 escribirArchivo(frame_number,tracks)
                 frame_number +=1
@@ -384,6 +407,7 @@ async def start_recording():
 async def stop_recording(background_tasks: BackgroundTasks):
     global is_recording, recording_filename, recording_ready
     is_recording = False
+
 
     for _ in range(50):  # Espera máx. ~5 segundos
         if recording_ready:

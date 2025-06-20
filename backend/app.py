@@ -123,8 +123,7 @@ def apply_zoom(frame, center, zoom_factor=1.5):
 
 #esta variable es para las metricas generales del path del archivo que cuando se cree tendrá que setearse esta hardcodeada 
 tracking_log_path = "detecciones.txt"
-def escribirArchivo(cap,tracks):
-    frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) if cap else 0
+def escribirArchivo(frame_number,tracks):
     with open(tracking_log_path, "a") as f:
         for t in tracks:
             x1, y1, x2, y2 = t.bbox
@@ -218,6 +217,7 @@ async def analyze(ws: WebSocket):
         video_writer = None
         global current_id, video_url, stream_url, is_recording, recording_ready
         cap = None
+        frame_number = 1
         while True:
             frame = None
             ## parte agarrar video
@@ -289,7 +289,11 @@ async def analyze(ws: WebSocket):
                         "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
                         "selected_id": current_id
             })
-            escribirArchivo(cap,tracks)
+            
+            if is_recording:
+                escribirArchivo(frame_number,tracks)
+                frame_number +=1
+
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 

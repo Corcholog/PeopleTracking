@@ -271,9 +271,6 @@ def write_groups(distance_threshold=100):
             visitados.add(p1['id_persona'])
             for j, p2 in enumerate(personas):
                 if i != j and p2['id_persona'] not in visitados:
-                    print(f"Comparando {p1['id_persona']} con {p2['id_persona']} en frame {id_frame}")
-                    print(f"grupo: {grupo}")
-                    print(f"datos_frame: {datos_por_frame[id_frame]}")
                     if get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold:
                         grupo.append(p2['id_persona'])
                         visitados.add(p2['id_persona'])

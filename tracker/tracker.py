@@ -105,7 +105,7 @@ def get_predict(frame, id=None):
                 cy = int((y1 + y2) / 2)
                 center = (cx, cy)
                 break
-
+        print("[INFO] Detections:", len(detections), flush=True)
         return frame, tracks, center
     except Exception as e:
         import traceback; traceback.print_exc()

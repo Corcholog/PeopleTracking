@@ -153,8 +153,8 @@ def write_tracking_log(frame_number, tracks):
             x1, y1, x2, y2 = t.bbox
             f.write(f"{t.track_id},{frame_number},{x1},{x2},{y1},{y2}\n")
 
-def write_directions(tracking_log_path):
-    dataset = np.loadtxt(tracking_log_path, delimiter=',', dtype=float, skiprows=2)
+def write_directions():
+    dataset = np.loadtxt(current_tracking_filename, delimiter=',', dtype=float, skiprows=2)
     directions = defaultdict(list)  # {idPersona: [ (idFrame, x1, x2, y1, y2), ... ]}
 
     # Agrupar por idPersona
@@ -163,7 +163,7 @@ def write_directions(tracking_log_path):
         directions[int(idPersona)].append((int(idFrame), x1, x2, y1, y2))
 
     # Archivo para output
-    with open(tracking_log_path, 'a') as f:
+    with open(current_tracking_filename, 'a') as f:
         f.write("# DIRECCIONES DE MOVIMIENTO\n")
         f.write("idPersona,idFrameInicial,idFrameFinal,movX,movY\n")
 
@@ -209,8 +209,9 @@ def write_directions(tracking_log_path):
             # Al final grabar el último segmento
             movement_end = idFrame
             f.write(f"{idPersona},{movement_begin},{movement_end},{last_x_dir},{last_y_dir}\n")
+            print(f"Se escribio: idPersona {idPersona} desde frame {movement_begin} hasta {movement_end} con movimiento ({last_x_dir}, {last_y_dir})")
 
-    print(f"Archivo '{tracking_log_path}' generado correctamente.")
+    print(f"Archivo '{current_tracking_filename}' generado correctamente.")
     return directions
 
 def get_centre(x1, x2, y1, y2):
@@ -219,23 +220,33 @@ def get_centre(x1, x2, y1, y2):
 def get_distance(p1, p2):
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
 
-def get_nearest_distance(group1 : list[{"id_persona", "centro"}], person):
+def get_nearest_distance(
+    group1: list[int],
+    person: dict[str, any],
+    datos_frame: list[dict[str, any]]
+):
     min_distance = float('inf')
+    
     for p in group1:
-        distance = get_distance(p['centro'], person['centro'])
-        if distance < min_distance:
-            min_distance = distance
+        # Buscar el dato correspondiente a p en datos_frame
+        dato_p = next((i for i in datos_frame if i['id_persona'] == p), None)
+        
+        if dato_p is not None:
+            distance = get_distance(dato_p['centro'], person['centro'])
+            if distance < min_distance:
+                min_distance = distance
+    
     return min_distance
 
-def write_groups(tracking_log_path, distance_threshold=100):
-    with open(tracking_log_path, 'r') as file:
-        lines = file.readlines()[1:]  # Saltar el header
+def write_groups(distance_threshold=100):
+    with open(current_tracking_filename, 'r') as file:
+        lines = file.readlines()[2:]  # Saltar el header
     datos_por_frame = {}
     
     # Procesar líneas
     for line in lines:
         line = line.strip()
-        if line.startswith("#") or not line:
+        if line.startswith("#"):
             break
         
         id_persona, id_frame, x1, x2, y1, y2 = list(map(int, line.split(',')))
@@ -260,7 +271,10 @@ def write_groups(tracking_log_path, distance_threshold=100):
             visitados.add(p1['id_persona'])
             for j, p2 in enumerate(personas):
                 if i != j and p2['id_persona'] not in visitados:
-                    if get_nearest_distance(grupo, p2) <= distance_threshold:
+                    print(f"Comparando {p1['id_persona']} con {p2['id_persona']} en frame {id_frame}")
+                    print(f"grupo: {grupo}")
+                    print(f"datos_frame: {datos_por_frame[id_frame]}")
+                    if get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold:
                         grupo.append(p2['id_persona'])
                         visitados.add(p2['id_persona'])
             if len(grupo) > 1:
@@ -270,11 +284,11 @@ def write_groups(tracking_log_path, distance_threshold=100):
                 })
 
     # Guardar resultado
-    with open(tracking_log_path, 'a') as f:
+    with open(current_tracking_filename, 'a') as f:
         f.write("# INICIO GRUPOS DE SIMILAR COMPORTAMIENTO\n")
         for grupo in grupos_detectados:
             f.write(f"Frame {grupo['frame']}: IDs {grupo['grupo_ids']}\n")
-
+            
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
     def init_video_writer(frame):
@@ -403,8 +417,6 @@ async def analyze(ws: WebSocket):
         if cap:
             cap.release()
 
-
-
 # ---------------------------------------------------
 # 11) Endpoints REST para control
 # ---------------------------------------------------
@@ -471,6 +483,7 @@ async def get_hardware_status():
 @app.get("/status/")
 async def get_status():
     global ready
+    print(f"estado de ready: {ready}")
     return {"ready": ready}
 
 @app.post("/start_recording/")
@@ -483,6 +496,7 @@ async def start_recording():
 async def stop_recording(background_tasks: BackgroundTasks):
     global is_recording, recording_filename, recording_ready
     is_recording = False
+    global current_tracking_filename
 
 
     for _ in range(50):  # Espera máx. ~5 segundos
@@ -496,6 +510,10 @@ async def stop_recording(background_tasks: BackgroundTasks):
         recording_ready = False  # Reset
 
         background_tasks.add_task(os.remove, filename_to_send)
+        write_directions()
+        threshold = config_state.get("resolution", (1920, 1080))[1] // 10
+        print(f"threshold para grupos: {threshold}")
+        write_groups(threshold)
 
         return FileResponse(
             path=filename_to_send,
@@ -504,9 +522,7 @@ async def stop_recording(background_tasks: BackgroundTasks):
             background=background_tasks
         )
 
-    write_directions(current_tracking_filename)
-    threshold = config_state.get("resolution", (1920, 1080))[1] // 10
-    write_groups(current_tracking_filename)
+    
 
     return JSONResponse(status_code=404, content={"error": "No recording found"})
 # ---------------------------------------------------

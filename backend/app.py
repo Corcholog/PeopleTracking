@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from yt_dlp import YoutubeDL
 import torch
 import json
+import math
 from yt_dlp import YoutubeDL
 from datetime import datetime
 from fastapi.responses import FileResponse
@@ -85,7 +86,7 @@ app.add_middleware(
 # 8) Estado compartido
 # ---------------------------------------------------
 current_id = None
-config_state = {"confidence_threshold": 0.5, "gpu": True, "fps": fps_default}
+config_state = {"confidence_threshold": 0.5, "gpu": True, "fps": fps_default, "resolution": (1920, 1080)}
 
 class IDPayload(BaseModel):
     id: int
@@ -136,13 +137,14 @@ def generate_tracking_filename():
     return filename
 
 # Función mejorada para escribir archivo con header
-def escribirArchivo(frame_number, tracks):
+def write_tracking_log(frame_number, tracks):
     global current_tracking_filename
     
     # Si es el primer frame, crear el archivo con header
     if frame_number == 1:
         current_tracking_filename = generate_tracking_filename()
         with open(current_tracking_filename, "w") as f:
+            f.write("# TRACKING LOG\n")
             f.write("idPersona,idFrame,x1,x2,y1,y2\n")
     
     # Escribir los datos de tracking
@@ -151,8 +153,8 @@ def escribirArchivo(frame_number, tracks):
             x1, y1, x2, y2 = t.bbox
             f.write(f"{t.track_id},{frame_number},{x1},{x2},{y1},{y2}\n")
 
-def getDirections(tracking_log_path, output_path):
-    dataset = np.loadtxt(tracking_log_path, delimiter=',', dtype=float, skiprows=1)
+def write_directions(tracking_log_path):
+    dataset = np.loadtxt(tracking_log_path, delimiter=',', dtype=float, skiprows=2)
     directions = defaultdict(list)  # {idPersona: [ (idFrame, x1, x2, y1, y2), ... ]}
 
     # Agrupar por idPersona
@@ -161,7 +163,8 @@ def getDirections(tracking_log_path, output_path):
         directions[int(idPersona)].append((int(idFrame), x1, x2, y1, y2))
 
     # Archivo para output
-    with open(output_path, 'w') as f:
+    with open(tracking_log_path, 'a') as f:
+        f.write("# DIRECCIONES DE MOVIMIENTO\n")
         f.write("idPersona,idFrameInicial,idFrameFinal,movX,movY\n")
 
         for idPersona, frames in directions.items():
@@ -170,12 +173,12 @@ def getDirections(tracking_log_path, output_path):
 
             movement_begin = frames[0][0]
             idFrame, last_x1, last_x2, last_y1, last_y2 = frames[0]
-            last_centre = ((last_x1 + last_x2) / 2, (last_y1 + last_y2) / 2)
+            last_centre = get_centre(last_x1, last_x2, last_y1, last_y2)
             last_x_dir, last_y_dir = 0, 0
 
             for i in range(1, len(frames)):
                 idFrame, x1, x2, y1, y2 = frames[i]
-                centre = ((x1 + x2) / 2, (y1 + y2) / 2)
+                centre = get_centre(x1, x2, y1, y2)
 
                 # Calcular dirección entre el último y el actual
                 if last_centre[0] - centre[0] > 0:
@@ -207,8 +210,70 @@ def getDirections(tracking_log_path, output_path):
             movement_end = idFrame
             f.write(f"{idPersona},{movement_begin},{movement_end},{last_x_dir},{last_y_dir}\n")
 
-    print(f"Archivo '{output_path}' generado correctamente.")
+    print(f"Archivo '{tracking_log_path}' generado correctamente.")
     return directions
+
+def get_centre(x1, x2, y1, y2):
+    return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+def get_distance(p1, p2):
+    return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+
+def get_nearest_distance(group1 : list[{"id_persona", "centro"}], person):
+    min_distance = float('inf')
+    for p in group1:
+        distance = get_distance(p['centro'], person['centro'])
+        if distance < min_distance:
+            min_distance = distance
+    return min_distance
+
+def write_groups(tracking_log_path, distance_threshold=100):
+    with open(tracking_log_path, 'r') as file:
+        lines = file.readlines()[1:]  # Saltar el header
+    datos_por_frame = {}
+    
+    # Procesar líneas
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#") or not line:
+            break
+        
+        id_persona, id_frame, x1, x2, y1, y2 = list(map(int, line.split(',')))
+        centro = get_centre(x1, x2, y1, y2)
+        
+        if id_frame not in datos_por_frame:
+            datos_por_frame[id_frame] = []
+        datos_por_frame[id_frame].append({
+            'id_persona': id_persona,
+            'centro': centro
+        })
+    
+    grupos_detectados = []
+
+    for id_frame, personas in datos_por_frame.items():
+        visitados = set()
+
+        for i, p1 in enumerate(personas):
+            if p1['id_persona'] in visitados:
+                continue
+            grupo = [p1['id_persona']]
+            visitados.add(p1['id_persona'])
+            for j, p2 in enumerate(personas):
+                if i != j and p2['id_persona'] not in visitados:
+                    if get_nearest_distance(grupo, p2) <= distance_threshold:
+                        grupo.append(p2['id_persona'])
+                        visitados.add(p2['id_persona'])
+            if len(grupo) > 1:
+                grupos_detectados.append({
+                    'frame': id_frame,
+                    'grupo_ids': grupo
+                })
+
+    # Guardar resultado
+    with open(tracking_log_path, 'a') as f:
+        f.write("# INICIO GRUPOS DE SIMILAR COMPORTAMIENTO\n")
+        for grupo in grupos_detectados:
+            f.write(f"Frame {grupo['frame']}: IDs {grupo['grupo_ids']}\n")
 
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
@@ -314,7 +379,7 @@ async def analyze(ws: WebSocket):
             })
 
             if is_recording:
-                escribirArchivo(frame_number,tracks)
+                write_tracking_log(frame_number,tracks)
                 frame_number +=1
 
             _, buf = cv2.imencode(".jpg", annotated)
@@ -385,6 +450,17 @@ async def update_config(payload: ConfigPayload):
     if payload.fps is not None:
         config_state["fps"] = payload.fps
         print(f"[CONFIG] FPS set to: {payload.fps}")
+    if payload.res is not None:
+        try:
+            width, height = map(int, payload.res.split("x"))
+            if width > 0 and height > 0:
+                config_state["resolution"] = (width, height)
+                print(f"[CONFIG] Resolution set to: {width}x{height}")
+            else:
+                raise ValueError("Invalid resolution values")
+        except Exception as e:
+            print(f"[CONFIG] Error setting resolution: {e}")
+            return JSONResponse(status_code=400, content={"error": "Invalid resolution format"})
     print(f"[CONFIG] {config_state}")
     return {"status": "ok", "new_state": config_state}
 
@@ -427,6 +503,10 @@ async def stop_recording(background_tasks: BackgroundTasks):
             filename=os.path.basename(filename_to_send),
             background=background_tasks
         )
+
+    write_directions(current_tracking_filename)
+    threshold = config_state.get("resolution", (1920, 1080))[1] // 10
+    write_groups(current_tracking_filename)
 
     return JSONResponse(status_code=404, content={"error": "No recording found"})
 # ---------------------------------------------------

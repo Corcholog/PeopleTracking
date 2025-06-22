@@ -6,7 +6,7 @@ import math
 import numpy as np
 
 
-current_tracking_filename = f"21-06-2025-22-45-Trackeo-1.txt"
+current_tracking_filename = f"21-06-2025-23-08-Trackeo-1.txt"
 
 def get_centre(x1, x2, y1, y2):
     return ((x1 + x2) // 2, (y1 + y2) // 2)
@@ -32,15 +32,37 @@ def get_nearest_distance(
     
     return min_distance
 
+def getDireccion(id,id_frame,lines):
+    for line in lines:
+        line = line.strip()
+        idP,idFi,idFf,movX,movY = list(map(int,line.split(',')))
+        if (idP == id):
+            if (id_frame >= idFi and id_frame <= idFf):
+                return movX,movY
+    return None
+
+def has_same_direction(p1X,p1Y,p2,id_frame,lines):
+    for line in lines:
+        line = line.strip()
+        idP,idFi,idFf,movX,movY = list(map(int,line.split(',')))
+        if (idP == p2):
+            if (id_frame >= idFi and id_frame <= idFf):
+                if (movX == p1X and movY == p1Y):
+                    return True
+    return False
+
+
 def write_groups(distance_threshold=100):
     with open(current_tracking_filename, 'r') as file:
         lines = file.readlines()[2:]  # Saltar el header
     datos_por_frame = {}
     
+    indiceDirecciones = 0
     # Procesar líneas
-    for line in lines:
+    for i,line in enumerate(lines):
         line = line.strip()
         if line.startswith("#"):
+            indiceDirecciones = i
             break
         
         id_persona, id_frame, x1, x2, y1, y2 = list(map(int, line.split(',')))
@@ -62,12 +84,15 @@ def write_groups(distance_threshold=100):
             if p1['id_persona'] in visitados:
                 continue
             grupo = [p1['id_persona']]
+            #no detecta grupos al tomar la dirección que tenemos... , sin la dirección si funcionan por proximidad.
+            #direccion = getDireccion(p1['id_persona'], id_frame, lines[indiceDirecciones+2:])
+            #if direccion is None:
+            #    continue
+            #p1X, p1Y = direccion
             visitados.add(p1['id_persona'])
             for j, p2 in enumerate(personas):
                 if i != j and p2['id_persona'] not in visitados:
-                    print(f"Comparando {p1['id_persona']} con {p2['id_persona']} en frame {id_frame}")
-                    print(f"grupo: {grupo}")
-                    print(f"datos_frame: {datos_por_frame[id_frame]}")
+                    #if has_same_direction(p1X,p1Y,p2,id_frame,lines[indiceDirecciones+2:]) and (get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold):
                     if get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold:
                         grupo.append(p2['id_persona'])
                         visitados.add(p2['id_persona'])

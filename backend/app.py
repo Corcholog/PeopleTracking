@@ -290,14 +290,16 @@ def write_groups(distance_threshold=100):
             if p1['id_persona'] in visitados:
                 continue
             grupo = [p1['id_persona']]
-            direccion = getDireccion(p1['id_persona'], id_frame, lines[indiceDirecciones+2:])
-            if direccion is None:
-                continue
-            p1X, p1Y = direccion
+            #no detecta grupos al tomar la dirección que tenemos... , sin la dirección si funcionan por proximidad.
+            #direccion = getDireccion(p1['id_persona'], id_frame, lines[indiceDirecciones+2:])
+            #if direccion is None:
+            #    continue
+            #p1X, p1Y = direccion
             visitados.add(p1['id_persona'])
             for j, p2 in enumerate(personas):
                 if i != j and p2['id_persona'] not in visitados:
-                    if has_same_direction(p1X,p1Y,p2,id_frame,lines[indiceDirecciones+2:]) and (get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold):
+                    #if has_same_direction(p1X,p1Y,p2,id_frame,lines[indiceDirecciones+2:]) and (get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold):
+                    if get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold:
                         grupo.append(p2['id_persona'])
                         visitados.add(p2['id_persona'])
             if len(grupo) > 1:

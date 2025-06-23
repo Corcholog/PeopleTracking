@@ -5,7 +5,7 @@
 }
 
 /* Sidebar fija a la izquierda */
-.sidebar {
+.leftSidebar {
   width: 220px;
   background-image: linear-gradient(#272831, #7a525c);
   box-sizing: border-box;
@@ -17,7 +17,7 @@
 }
 
 /* Botón para colapsar */
-.collapseButton {
+.collapseButtonLeft {
   font-weight: bold;
   align-self: flex-end;
   background: transparent;
@@ -33,7 +33,7 @@
 }
 
 /* Botón para expandir cuando está colapsado */
-.expandButton {
+.expandButtonLeft {
   font-weight: bold;
   position: absolute;
   margin-left: 0;
@@ -300,4 +300,59 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.rightSidebar {
+  width: 500px; 
+  background-image: linear-gradient(#272831, #7a525c); 
+  box-sizing: border-box;
+  color: #98878F; 
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  border-left: 3px solid #98878F;
+  /*position: absolute;*/
+  right: 0;
+  top: 0;
+  height: 100%;
+  z-index: 100;
+}
+
+.expandButtonRight {
+  font-weight: bold;
+  position: absolute;
+  top: 1rem;
+  right: 0;
+  background-color: #192231;
+  color: #98878F;
+  border: 1px solid #98878F;
+  border-right: none;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  z-index: 1000;
+  border-radius: 5px 0 0 5px;
+}
+
+.collapseButtonRight {
+  font-weight: bold;
+  align-self: flex-start;
+  background: transparent;
+  color: #98878F;
+  border: 1px solid #98878F;
+  border-left: none;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  margin-top: 1rem;
+  border-radius: 0px 5px 5px 0px; 
+}
+
+.rightSidebarContent {
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  padding: 5px;
+  overflow-x: auto;
 }

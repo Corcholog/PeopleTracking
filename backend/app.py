@@ -251,31 +251,22 @@ def has_same_direction(p1X,p1Y,p2,id_frame,lines):
                     return True
     return False
 
-
-def write_groups(distance_threshold=100):
-    with open(current_tracking_filename, 'r') as file:
-        lines = file.readlines()[2:]  # Saltar el header
+grupos_detectados = []
+def getGroups(distance_threshold=100):
     datos_por_frame = {}
-    
-    indiceDirecciones = 0
-    # Procesar líneas
-    for i,line in enumerate(lines):
-        line = line.strip()
-        if line.startswith("#"):
-            indiceDirecciones = i
-            break
-        
-        id_persona, id_frame, x1, x2, y1, y2 = list(map(int, line.split(',')))
+
+    # Procesar la lista en memoria
+    for id_persona, id_frame, x1, x2, y1, y2 in tracking_data_metrics:
         centro = get_centre(x1, x2, y1, y2)
-        
         if id_frame not in datos_por_frame:
             datos_por_frame[id_frame] = []
         datos_por_frame[id_frame].append({
             'id_persona': id_persona,
             'centro': centro
         })
-    
-    grupos_detectados = []
+
+    global grupos_detectados
+    grupo_id = 1  # Para asignar IDs únicos a los grupos
 
     for id_frame, personas in datos_por_frame.items():
         visitados = set()
@@ -290,23 +281,25 @@ def write_groups(distance_threshold=100):
             #    continue
             #p1X, p1Y = direccion
             visitados.add(p1['id_persona'])
+
             for j, p2 in enumerate(personas):
                 if i != j and p2['id_persona'] not in visitados:
                     #if has_same_direction(p1X,p1Y,p2,id_frame,lines[indiceDirecciones+2:]) and (get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold):
                     if get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold:
                         grupo.append(p2['id_persona'])
                         visitados.add(p2['id_persona'])
+
             if len(grupo) > 1:
                 grupos_detectados.append({
+                    'id_grupo': grupo_id,
                     'frame': id_frame,
                     'grupo_ids': grupo
                 })
+                grupo_id += 1
 
-    # Guardar resultado
-    with open(current_tracking_filename, 'a') as f:
-        f.write("# INICIO GRUPOS DE SIMILAR COMPORTAMIENTO\n")
-        for grupo in grupos_detectados:
-            f.write(f"Frame {grupo['frame']}: IDs {grupo['grupo_ids']}\n")
+
+
+
             
 @app.websocket("/ws/analyze/")
 async def analyze(ws: WebSocket):
@@ -411,6 +404,9 @@ async def analyze(ws: WebSocket):
                         "selected_id": current_id
             })
             addTrackingGenericMetrics(frame_number,tracks)
+            getGroups(config_state.get("resolution", (1920, 1080))[1] // 10)
+            print("primer grupo")
+            print(grupos_detectados[1])
             frame_number +=1
 
             _, buf = cv2.imencode(".jpg", annotated)
@@ -530,7 +526,7 @@ async def stop_recording(background_tasks: BackgroundTasks):
         write_directions()
         threshold = config_state.get("resolution", (1920, 1080))[1] // 10
         print(f"threshold para grupos: {threshold}")
-        write_groups(threshold)
+        #write_groups(threshold)
 
         return FileResponse(
             path=filename_to_send,

@@ -18,7 +18,7 @@ from datetime import datetime
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks
-from collections import defaultdict
+from collections import defaultdict, deque
 
 
 # 1) Detecta si está bundlado o en desarrollo
@@ -136,77 +136,86 @@ def generate_tracking_filename():
     filename = f"{timestamp}-{tracking_id}.txt"
     return filename
 
-# Función mejorada para escribir archivo con header
 tracking_data_metrics = []
-# Función mejorada para escribir archivo con header
+tracking_data_last_frame = []  # Lista de (id_persona, centro) del frame actual
+
 def addTrackingGenericMetrics(frame_number, tracks):
-    global tracking_data_metrics
-    # Escribir los datos de tracking
+    global tracking_data_metrics, tracking_data_last_frame
+    tracking_data_last_frame = []  # Reiniciar para el nuevo frame
+    
     for t in tracks:
         x1, y1, x2, y2 = t.bbox
         tracking_data_metrics.append((t.track_id, frame_number, x1, x2, y1, y2))
 
+        centro = get_centre(x1, x2, y1, y2)
+        tracking_data_last_frame.append({
+            'id_persona': t.track_id,
+            'centro': centro
+        })
+        
+previous_directions = {}
+history_points = defaultdict(lambda: deque(maxlen=5))
+angle_threshold = 90 # Grados para detectar cambio de rumbo
+angle_diff_threshold = 20  # Grados para detectar cercanía de dirección entre personas
 
-def write_directions():
-    dataset = np.loadtxt(current_tracking_filename, delimiter=',', dtype=float, skiprows=2)
-    directions = defaultdict(list)  # {idPersona: [ (idFrame, x1, x2, y1, y2), ... ]}
+direction_strings = defaultdict(list) # Array indexed by idPersona, with direction strings
 
-    # Agrupar por idPersona
-    for row in dataset:
-        idPersona, idFrame, x1, x2, y1, y2 = row
-        directions[int(idPersona)].append((int(idFrame), x1, x2, y1, y2))
+def direction_to_text(vec):
+    x, y = vec
+    if np.allclose(vec, [0, 0]):
+        return "Stopped"
+    angle = np.degrees(np.arctan2(y, x)) % 360
+    if 337.5 <= angle or angle < 22.5:
+        return "East"
+    elif 22.5 <= angle < 67.5:
+        return "Northeast"
+    elif 67.5 <= angle < 112.5:
+        return "North"
+    elif 112.5 <= angle < 157.5:
+        return "Northwest"
+    elif 157.5 <= angle < 202.5:
+        return "West"
+    elif 202.5 <= angle < 247.5:
+        return "Southwest"
+    elif 247.5 <= angle < 292.5:
+        return "South"
+    else:
+        return "Southeast"
 
-    # Archivo para output
-    with open(current_tracking_filename, 'a') as f:
-        f.write("# DIRECCIONES DE MOVIMIENTO\n")
-        f.write("idPersona,idFrameInicial,idFrameFinal,movX,movY\n")
+def detect_directions(frame_number, tracks):
+    """
+    Calcula la dirección actual por persona usando su historial y detecta cambios de rumbo.
+    """
+    global previous_directions, history_points, direction_strings
 
-        for idPersona, frames in directions.items():
-            # Ordenar por idFrame por las dudas
-            frames.sort(key=lambda x: x[0])
+    for t in tracks:
+        idPersona = t.track_id
+        x1, y1, x2, y2 = t.bbox
+        centro = get_centre(x1, x2, y1, y2)
+        history_points[idPersona].append((frame_number, centro))
 
-            movement_begin = frames[0][0]
-            idFrame, last_x1, last_x2, last_y1, last_y2 = frames[0]
-            last_centre = get_centre(last_x1, last_x2, last_y1, last_y2)
-            last_x_dir, last_y_dir = 0, 0
+        if len(history_points[idPersona]) < 2:
+            continue
 
-            for i in range(1, len(frames)):
-                idFrame, x1, x2, y1, y2 = frames[i]
-                centre = get_centre(x1, x2, y1, y2)
+        frames_arr = np.array([f for f, _ in history_points[idPersona]])
+        xs = np.array([p[0] for _, p in history_points[idPersona]])
+        ys = np.array([p[1] for _, p in history_points[idPersona]])
 
-                # Calcular dirección entre el último y el actual
-                if last_centre[0] - centre[0] > 0:
-                    x_dir = 1   # Derecha
-                elif last_centre[0] - centre[0] < 0:
-                    x_dir = -1  # Izquierda
-                else:
-                    x_dir = 0
+        a_x, _ = np.polyfit(frames_arr, xs, 1)
+        a_y, _ = np.polyfit(frames_arr, ys, 1)
 
-                if last_centre[1] - centre[1] > 0:
-                    y_dir = 1   # Abajo
-                elif last_centre[1] - centre[1] < 0:
-                    y_dir = -1  # Arriba
-                else:
-                    y_dir = 0
+        vec = np.array([a_x, -a_y])
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            direction = np.array([0.0, 0.0])
+        else:
+            direction = vec / norm
 
-                # Si cambia dirección
-                if (x_dir != last_x_dir or y_dir != last_y_dir):
-                    movement_end = idFrame
-                    # Escribir en el archivo
-                    f.write(f"{idPersona},{movement_begin},{movement_end},{last_x_dir},{last_y_dir}\n")
-                    movement_begin = idFrame  # Nuevo segmento
+        dir_text = direction_to_text(direction)
+        direction_strings[idPersona].append(dir_text)
 
-                last_x1, last_x2, last_y1, last_y2 = x1, x2, y1, y2
-                last_centre = centre
-                last_x_dir, last_y_dir = x_dir, y_dir
+        previous_directions[idPersona] = direction
 
-            # Al final grabar el último segmento
-            movement_end = idFrame
-            f.write(f"{idPersona},{movement_begin},{movement_end},{last_x_dir},{last_y_dir}\n")
-            print(f"Se escribio: idPersona {idPersona} desde frame {movement_begin} hasta {movement_end} con movimiento ({last_x_dir}, {last_y_dir})")
-
-    print(f"Archivo '{current_tracking_filename}' generado correctamente.")
-    return directions
 
 def get_centre(x1, x2, y1, y2):
     return ((x1 + x2) // 2, (y1 + y2) // 2)
@@ -232,73 +241,53 @@ def get_nearest_distance(
     
     return min_distance
 
-def getDireccion(id,id_frame,lines):
-    for line in lines:
-        line = line.strip()
-        idP,idFi,idFf,movX,movY = list(map(int,line.split(',')))
-        if (idP == id):
-            if (id_frame >= idFi and id_frame <= idFf):
-                return movX,movY
-    return None
-
-def has_same_direction(p1X,p1Y,p2,id_frame,lines):
-    for line in lines:
-        line = line.strip()
-        idP,idFi,idFf,movX,movY = list(map(int,line.split(',')))
-        if (idP == p2):
-            if (id_frame >= idFi and id_frame <= idFf):
-                if (movX == p1X and movY == p1Y):
-                    return True
-    return False
-
 grupos_detectados = []
-def getGroups(distance_threshold=100):
-    datos_por_frame = {}
 
-    # Procesar la lista en memoria
-    for id_persona, id_frame, x1, x2, y1, y2 in tracking_data_metrics:
-        centro = get_centre(x1, x2, y1, y2)
-        if id_frame not in datos_por_frame:
-            datos_por_frame[id_frame] = []
-        datos_por_frame[id_frame].append({
-            'id_persona': id_persona,
-            'centro': centro
-        })
+def have_same_direction(id1, id2, previous_directions, angle_threshold=20):
+    """
+    Devuelve True si las dos personas tienen direcciones similares
+    según el umbral de ángulo (en grados).
+    """
+    v1 = previous_directions.get(id1)
+    v2 = previous_directions.get(id2)
+    if v1 is None or v2 is None:
+        return False  # No hay datos de dirección suficientes
 
-    global grupos_detectados
-    grupo_id = 1  # Para asignar IDs únicos a los grupos
+    dot = np.clip(np.dot(v1, v2), -1.0, 1.0)
+    angle = np.degrees(np.arccos(dot))
+    
+    return angle < angle_threshold
 
-    for id_frame, personas in datos_por_frame.items():
-        visitados = set()
+def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
+    grupos_detectados_frame = []
+    visitados = set()
+    grupo_id = 1
 
-        for i, p1 in enumerate(personas):
-            if p1['id_persona'] in visitados:
+    personas = tracking_data_last_frame
+
+    for i, p1 in enumerate(personas):
+        if p1['id_persona'] in visitados:
+            continue
+        grupo = [p1['id_persona']]
+        visitados.add(p1['id_persona'])
+
+        for j, p2 in enumerate(personas):
+            if i == j or p2['id_persona'] in visitados:
                 continue
-            grupo = [p1['id_persona']]
-            #no detecta grupos al tomar la dirección que tenemos... , sin la dirección si funcionan por proximidad.
-            #direccion = getDireccion(p1['id_persona'], id_frame, lines[indiceDirecciones+2:])
-            #if direccion is None:
-            #    continue
-            #p1X, p1Y = direccion
-            visitados.add(p1['id_persona'])
 
-            for j, p2 in enumerate(personas):
-                if i != j and p2['id_persona'] not in visitados:
-                    #if has_same_direction(p1X,p1Y,p2,id_frame,lines[indiceDirecciones+2:]) and (get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold):
-                    if get_nearest_distance(grupo, p2, datos_por_frame[id_frame]) <= distance_threshold:
-                        grupo.append(p2['id_persona'])
-                        visitados.add(p2['id_persona'])
+            if get_nearest_distance(grupo, p2, personas) <= distance_threshold and \
+               have_same_direction(p1['id_persona'], p2['id_persona'], previous_directions, angle_threshold):
+                grupo.append(p2['id_persona'])
+                visitados.add(p2['id_persona'])
 
-            if len(grupo) > 1:
-                grupos_detectados.append({
-                    'id_grupo': grupo_id,
-                    'frame': id_frame,
-                    'grupo_ids': grupo
-                })
-                grupo_id += 1
+        if len(grupo) > 1:
+            grupos_detectados_frame.append({
+                'id_grupo': grupo_id,
+                'grupo_ids': grupo
+            })
+            grupo_id += 1
 
-
-
+    return grupos_detectados_frame
 
             
 @app.websocket("/ws/analyze/")
@@ -326,13 +315,16 @@ async def analyze(ws: WebSocket):
 
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
+
     try:
         video_writer = None
         global current_id, video_url, stream_url, is_recording, recording_ready
         cap = None
         frame_number = 1
+
         while True:
             frame = None
+
             ## parte agarrar video
             if stream_url and video_url:
                 if cap is None:
@@ -358,7 +350,7 @@ async def analyze(ws: WebSocket):
                     if "text" in message:
                         try:
                             data = message["text"]
-                            parsed = json.loads(data)  # 👈 intentamos decodificar como JSON
+                            parsed = json.loads(data)
                             if isinstance(parsed, dict) and parsed.get("type") == "stop":
                                 print("🛑 Solicitud de detener recibida (JSON)")
                                 break
@@ -371,15 +363,18 @@ async def analyze(ws: WebSocket):
                         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                         if frame is None:
                             continue
+
             if frame is None:
                 continue
+
             if is_recording and video_writer is None:
                 init_video_writer(frame)
+
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
                     executor, get_predict, frame, current_id
-            )
+                )
             except Exception as e:
                 print("❌ Error en get_predict:", e)
                 continue
@@ -395,24 +390,35 @@ async def analyze(ws: WebSocket):
                 frame_number = 1
                 print("💾 Grabación finalizada sin detener el tracking.")
 
-            if center: # Hay que ver si grabamos el zoom o no
+            if center:
                 annotated = apply_zoom(annotated, center)
 
             await ws.send_json({
-                        "type": "lista_de_ids",
-                        "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                        "selected_id": current_id
+                "type": "lista_de_ids",
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "selected_id": current_id
             })
-            addTrackingGenericMetrics(frame_number,tracks)
-            getGroups(config_state.get("resolution", (1920, 1080))[1] // 10)
-            print("primer grupo")
-            print(grupos_detectados[1])
-            frame_number +=1
+
+            addTrackingGenericMetrics(frame_number, tracks)
+            detect_directions(frame_number, tracks)
+            #print(f"ultima direccion de todas las personas: {direction_strings}")
+
+            # 🔹 Detectar grupos en el frame actual
+            grupos_actuales = getGroupsRealTime(
+                distance_threshold=config_state.get("resolution", (1920, 1080))[1] // 10,
+                angle_threshold=angle_diff_threshold
+            )
+            if grupos_actuales:
+                print(f"🟢 Grupos detectados en frame {frame_number}:")
+                for grupo in grupos_actuales:
+                    print(f"   Grupo {grupo['id_grupo']}: {grupo['grupo_ids']}")
+            else:
+                print(f"🔹 Sin grupos detectados en frame {frame_number}")
+            frame_number += 1
 
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())
 
-            # Delay pequeño si es stream
             if stream_url and video_url:
                 await asyncio.sleep(0.03)
 
@@ -429,7 +435,6 @@ async def analyze(ws: WebSocket):
         print("🛑 Handler WebSocket terminado.")
         if cap:
             cap.release()
-
 # ---------------------------------------------------
 # 11) Endpoints REST para control
 # ---------------------------------------------------
@@ -523,11 +528,9 @@ async def stop_recording(background_tasks: BackgroundTasks):
         recording_ready = False  # Reset
 
         background_tasks.add_task(os.remove, filename_to_send)
-        write_directions()
-        threshold = config_state.get("resolution", (1920, 1080))[1] // 10
-        print(f"threshold para grupos: {threshold}")
-        #write_groups(threshold)
 
+        for person, directions in direction_strings.items():
+            print(f"Persona {person} direcciones: {directions}")
         return FileResponse(
             path=filename_to_send,
             media_type="video/mp4",
@@ -535,7 +538,6 @@ async def stop_recording(background_tasks: BackgroundTasks):
             background=background_tasks
         )
 
-    
 
     return JSONResponse(status_code=404, content={"error": "No recording found"})
 # ---------------------------------------------------

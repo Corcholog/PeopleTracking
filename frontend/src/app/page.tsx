@@ -63,8 +63,6 @@ export default function DashboardPage() {
         if (typeof evt.data === "string") {
           const msg = JSON.parse(evt.data);
           if (msg.type === "lista_de_ids") {
-            console.log("🔍 Detections recibidas:", msg.detections);
-            console.log("🎯 ID seleccionado:", msg.selected_id);
 
             // Aca estan los datos
             setDetections(msg.detections);
@@ -87,7 +85,6 @@ export default function DashboardPage() {
         }
       },
       onStopped: () => {
-        console.log("✅ Confirmado: análisis detenido");
         setIsStopping(false);
         setIsCameraActive(false);
         setIsTracking(false);
@@ -311,7 +308,6 @@ export default function DashboardPage() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      console.log("🎥 Grabación descargada como:", filename);
     } catch (error) {
       console.error("Error al descargar grabación:", error);
     }
@@ -319,11 +315,8 @@ export default function DashboardPage() {
 
   const handleResolutionChange = async (e) => {
     setSelectedResolution(e.target.value);
-    console.log("entro al handle video change");
     const newRes = e.target.value;
-    console.log(newRes);
     setSelectedResolution(newRes);
-    console.log("Device: " + selectedDevice);
   };
 
   const handleStartTracking = async () => {
@@ -349,7 +342,6 @@ export default function DashboardPage() {
         throw new Error("Fallo en el backend");
       }
       setIsRecording(true);
-      console.log("🎥 Grabación iniciada");
     } catch (error) {
       console.error("Error al iniciar la grabación:", error);
     }
@@ -404,8 +396,6 @@ export default function DashboardPage() {
           body: JSON.stringify(config),
         });
 
-        const json = await res.json();
-        console.log("Configuración enviada al backend:", json);
       } catch (err) {
         console.error("Error al enviar configuración:", err);
       }
@@ -433,7 +423,6 @@ export default function DashboardPage() {
           },
           body: JSON.stringify({ fps: fpsLimit }),
         });
-        console.log(`FPS actualizado a ${fpsLimit}`);
       } catch (err) {
         console.error("Error al actualizar FPS:", err);
       }

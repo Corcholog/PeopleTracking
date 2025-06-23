@@ -137,21 +137,15 @@ def generate_tracking_filename():
     return filename
 
 # Función mejorada para escribir archivo con header
-def write_tracking_log(frame_number, tracks):
-    global current_tracking_filename
-    
-    # Si es el primer frame, crear el archivo con header
-    if frame_number == 1:
-        current_tracking_filename = generate_tracking_filename()
-        with open(current_tracking_filename, "w") as f:
-            f.write("# TRACKING LOG\n")
-            f.write("idPersona,idFrame,x1,x2,y1,y2\n")
-    
+tracking_data_metrics = []
+# Función mejorada para escribir archivo con header
+def addTrackingGenericMetrics(frame_number, tracks):
+    global tracking_data_metrics
     # Escribir los datos de tracking
-    with open(current_tracking_filename, "a") as f:
-        for t in tracks:
-            x1, y1, x2, y2 = t.bbox
-            f.write(f"{t.track_id},{frame_number},{x1},{x2},{y1},{y2}\n")
+    for t in tracks:
+        x1, y1, x2, y2 = t.bbox
+        tracking_data_metrics.append((t.track_id, frame_number, x1, x2, y1, y2))
+
 
 def write_directions():
     dataset = np.loadtxt(current_tracking_filename, delimiter=',', dtype=float, skiprows=2)
@@ -416,10 +410,8 @@ async def analyze(ws: WebSocket):
                         "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
                         "selected_id": current_id
             })
-
-            if is_recording:
-                write_tracking_log(frame_number,tracks)
-                frame_number +=1
+            addTrackingGenericMetrics(frame_number,tracks)
+            frame_number +=1
 
             _, buf = cv2.imencode(".jpg", annotated)
             await ws.send_bytes(buf.tobytes())

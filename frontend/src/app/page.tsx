@@ -30,6 +30,11 @@ export default function DashboardPage() {
 
   const [isRecording, setIsRecording] = useState(false);
 
+  // Estados para las barras laterales
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false); // Izquierda
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false); // Derecha
+
+
   useEffect(() => {
     const checkBackendReady = async () => {
       try {
@@ -409,8 +414,6 @@ export default function DashboardPage() {
     sendTrackingConfig();
   }, [processingUnit, confidenceThreshold]);
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-
   // Cambio de FPSs
   useEffect(() => {
     const updateFpsSetting = async () => {
@@ -439,14 +442,26 @@ export default function DashboardPage() {
     updateFpsSetting();
   }, [fpsLimit]);
 
+  // funciones para manejar las barras laterales
+  const openLeftSidebar = () => {
+    setIsLeftSidebarOpen(true);
+    setIsRightSidebarOpen(false); // Cierra la derecha
+  };
+
+  const openRightSidebar = () => {
+    setIsRightSidebarOpen(true);
+    setIsLeftSidebarOpen(false); // Cierra la izquierda
+  };
+
+
 
   return (
     <div className={styles.layoutContainer}>
-      {isSidebarOpen && (
-        <div className={styles.sidebar}>
+      {isLeftSidebarOpen && (
+        <div className={styles.leftSidebar}>
           <button
-            onClick={() => setIsSidebarOpen(false)}
-            className={styles.collapseButton}
+            onClick={() => setIsLeftSidebarOpen(false)}
+            className={styles.collapseButtonLeft}
           >
             {"<"}
           </button>
@@ -544,12 +559,13 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {!isSidebarOpen && (
+      {/* Botón para expandir sidebar izquierda */}
+      {!isLeftSidebarOpen && !isRightSidebarOpen && (
         <button
-          onClick={() => setIsSidebarOpen(true)}
-          className={styles.expandButton}
+          onClick={openLeftSidebar}
+          className={styles.expandButtonLeft}
         >
-          {">"}
+          {" Configuración >"}
         </button>
       )}
 
@@ -627,7 +643,7 @@ export default function DashboardPage() {
                   className={styles.selectCamera}
                   onChange={(e) => setSelectedDevice(e.target.value)}
                   value={selectedDevice}
-                  disabled={isStopping} // 🔒 bloquea cuando estás esperando
+                  disabled={isStopping} // bloquea cuando estás esperando
                 >
                   <option value="">-- Seleccionar cámara --</option>
                   {devices.map((d) => (
@@ -690,6 +706,59 @@ export default function DashboardPage() {
           <canvas ref={rawCanvasRef} style={{ display: "none" }} />
         </main>
       )}
+
+      {/* Sidebar derecho */}
+      {isRightSidebarOpen && (
+        <div className={styles.rightSidebar}>
+          <button
+            onClick={() => setIsRightSidebarOpen(false)}
+            className={styles.collapseButtonRight}
+          >
+            {">"}
+          </button>
+
+          {/* ✅ NUEVO CONTENEDOR */}
+          <div className={styles.rightSidebarContent}>
+            <details className={styles.trackingDropdown}>
+              <summary>Ver métricas generales</summary>
+              <div className={styles.optionsContainer}>
+                <p>Contenido del panel derecho para las métricas</p>
+              </div>
+            </details>
+
+            <details className={styles.zoomDropdown}>
+              <summary>Métricas individuales</summary>
+              <div className={styles.zoomScrollContainer}>
+                {!isStopping &&
+                  detections.map((det) => (
+                    <button key={det.id}>Ver métricas del ID {det.id}</button>
+                  ))}
+              </div>
+            </details>
+
+            <details className={styles.zoomDropdown}>
+              <summary>Métricas grupales</summary>
+              <div className={styles.zoomScrollContainer}>
+                {!isStopping &&
+                  detections.map((det) => (
+                    <button key={det.id}>Ver métricas del grupo ID {det.id}</button>
+                  ))}
+              </div>
+            </details>
+          </div>
+        </div>
+      )}
+
+      {/* Boton para expandir sidebar derecha */}
+      {!isRightSidebarOpen && !isLeftSidebarOpen && (
+        <button
+          onClick={openRightSidebar}
+          className={styles.expandButtonRight}
+        >
+          {"< Metricas"} 
+        </button>
+      )}
+
     </div>
   );
 }

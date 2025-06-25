@@ -1,7 +1,10 @@
 "use client";
 import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import styles from "./page.module.css";
+//import { save } from '@tauri-apps/plugin-dialog';
+//import { writeFile  } from '@tauri-apps/plugin-fs';
+
 
 export default function DashboardPage() {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -41,6 +44,106 @@ export default function DashboardPage() {
   const toggleSection = (section: string) => {
     setActiveSection((prev) => (prev === section ? null : section));
   };
+  //parte de usar permitir ver frames anteriores:
+  // número máximo de frames a guardar
+const [maxBuffer, setMaxBuffer] = useState<number>(5000);
+type FrameBlob = { blob: Blob; time: number };
+const [frameBuffer, setFrameBuffer] = useState<FrameBlob[]>([]);
+const [currentIndex, setCurrentIndex] = useState<number>(-1);
+const wasLiveRef = useRef(true);
+const [isPlaying, setIsPlaying] = useState(false);
+const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
+const firstFrameTimeRef = useRef<number | null>(null);
+const [isVideoEnded, setIsVideoEnded] = useState(false);
+// 1) Define un estado para el live frame:
+const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
+
+
+  // resolutionStreaming: límite máximo 1280x720
+  // Si el usuario elige menor (p. ej. 854x480), mantén esa
+  const resolutionStreaming = useMemo(() => {
+    const [w, h] = selectedResolution.split("x").map(Number);
+    // ancho máximo 1280, alto máximo 720
+    const sw = Math.min(w, 1280);
+    const sh = Math.min(h, 720);
+    return `${sw}x${sh}`;      // ej: "1280x720" o "854x480"
+  }, [selectedResolution]);
+
+useEffect(() => {
+  // 1. Mapea cada resolución a un tamaño medio de blob JPEG (en KB)
+  const [rw, rh] = resolutionStreaming.split("x").map(Number);
+  let avgBlobKB: number;
+  if (rw >= 3840 || rh >= 2160) {
+    avgBlobKB = 300;   // 4K, cuesta más
+  } else if (rw >= 2560 || rh >= 1440) {
+    avgBlobKB = 250;   // 2K
+  } else if (rw >= 1920 || rh >= 1080) {
+    avgBlobKB = 200;   // 1080p
+  } else if (rw >= 1280 || rh >= 720) {
+    avgBlobKB = 100;   // 720p
+  } else if (rw >= 854 || rh >= 480) {
+    avgBlobKB = 50;    // 480p
+  } else if (rw >= 640 || rh >= 360) {
+    avgBlobKB = 30;    // 360p
+  } else {
+    avgBlobKB = 20;    // resoluciones menores
+  }
+
+  // 2. RAM aproximada reportada por el navegador (GB)
+  const reportedGB = (navigator as any).deviceMemory || 4;
+  // % de esa RAM que queremos dedicar al buffer
+  const fraction = 0.5;  // 50%
+  const budgetMB = reportedGB * 1024 * fraction;    // MB disponibles
+  const budgetKB = budgetMB * 1024;                 // KB disponibles
+  const theoreticalFrames = Math.floor(budgetKB / avgBlobKB);
+
+  // 3. Si la API performance.memory existe, comprobamos el heap libre
+  let safeFrames = theoreticalFrames;
+  const perf = (performance as any).memory;
+  if (perf && perf.usedJSHeapSize && perf.jsHeapSizeLimit) {
+    const usedMB  = perf.usedJSHeapSize  / 1024 / 1024;
+    const limitMB = perf.jsHeapSizeLimit / 1024 / 1024;
+    const freeMB  = Math.max(0, limitMB - usedMB);
+    // Dedicamos aquí un % adicional, p.ej. 60% del heap libre
+    const heapFraction = 0.5;
+    const heapBudgetKB = freeMB * 1024 * heapFraction;
+    const heapFrames   = Math.floor(heapBudgetKB / avgBlobKB);
+    // No queremos pasarnos del heap libre
+    safeFrames = Math.min(theoreticalFrames, heapFrames);
+  }
+
+  // 4. Establecemos maxBuffer
+  setMaxBuffer(safeFrames);
+
+  console.log(
+    `▶️ resolutionStreaming=${resolutionStreaming}, avgBlob≈${avgBlobKB}KB/frame\n` +
+    `   reportedRAM≈${reportedGB}GB → budget=${budgetMB.toFixed(1)}MB → ` +
+    `frames(teórico)=${theoreticalFrames}` +
+    (perf && perf.usedJSHeapSize
+      ? `, heapLibre=${((perf.jsHeapSizeLimit - perf.usedJSHeapSize)/1024/1024).toFixed(1)}MB → safeFrames=${safeFrames}`
+      : "")
+  );
+}, [resolutionStreaming]);
+
+const registerFrameTime = (time: number) => {
+  if (firstFrameTimeRef.current === null) {
+    firstFrameTimeRef.current = time;
+  }
+};
+
+const resetFirstFrameTime = () => {
+  if (frameBuffer.length > 0) {
+    firstFrameTimeRef.current = frameBuffer[0].time;
+  } else {
+    firstFrameTimeRef.current = null;
+  }
+};
+const resetPlaybackState = () => {
+  setFrameBuffer([]);
+  setCurrentIndex(-1);
+  firstFrameTimeRef.current = null;
+  wasLiveRef.current = true;
+};
 
   useEffect(() => {
     const checkBackendReady = async () => {
@@ -66,7 +169,7 @@ export default function DashboardPage() {
   const { send, waitUntilReady, isConnected, isReady, connect, ws } =
     useWebSocket({
       url: "ws://localhost:8000/ws/analyze/",
-      onMessage: (evt: MessageEvent) => {
+      onMessage: async (evt: MessageEvent) => {
         if (typeof evt.data === "string") {
           const msg = JSON.parse(evt.data);
 
@@ -90,19 +193,38 @@ export default function DashboardPage() {
             if (msg.selected_id == null) setSelectedId("");
           }
         } else {
-          const bytes = new Uint8Array(evt.data as ArrayBuffer);
-          const blob = new Blob([bytes], { type: "image/jpeg" });
-          const img = new Image();
-          img.onload = () => {
-            const ctx = annotatedCanvasRef.current?.getContext("2d");
-            if (ctx && annotatedCanvasRef.current) {
-              annotatedCanvasRef.current.width = img.width;
-              annotatedCanvasRef.current.height = img.height;
-              ctx.drawImage(img, 0, 0);
-              URL.revokeObjectURL(img.src);
-            }
-          };
-          img.src = URL.createObjectURL(blob);
+          if (!(evt.data instanceof ArrayBuffer)) return;
+          const blob = new Blob([evt.data], { type: "image/jpeg" });
+          const now = Date.now();
+          const fullBmp = await createImageBitmap(blob);
+          setLiveFrame({ bitmap: fullBmp, time: now });
+
+          // 2) Buffer downsample + JPEG
+          //    calculamos anchura/altura de buffer según resolutionStreaming
+          const [bw, bh] = resolutionStreaming.split("x").map(Number);
+          const off = document.createElement("canvas");
+          off.width = bw;
+          off.height = bh;
+          const octx = off.getContext("2d")!;
+          // redibuja el fullBmp escalado a bw×bh
+          octx.drawImage(fullBmp, 0, 0, bw, bh);
+          off.toBlob((smallBlob) => {
+            if (!smallBlob) return;
+
+              setFrameBuffer((buf) => {
+                const newFrame = { blob: smallBlob, time: now };
+                const next = buf.length >= maxBuffer
+                  ? [...buf.slice(1), newFrame]
+                  : [...buf, newFrame];
+                registerFrameTime(now);
+                // 3) Si estamos en live, avanza el índice al último
+                if (wasLiveRef.current) {
+                  setCurrentIndex(next.length - 1);
+                }
+                return next;
+              });
+            }, "image/jpeg", 0.7);
+  
         }
       },
       onStopped: () => {
@@ -113,8 +235,95 @@ export default function DashboardPage() {
         setSelectedDevice("");
         setStream(false);
         setDetections([]);
+        resetFirstFrameTime(); // 👈 acá reiniciás el tiempo
+        resetPlaybackState();
+        setIsVideoEnded(false);
       },
     });
+
+
+useEffect(() => {
+  if (wasLiveRef.current) return;
+  // toma el frame actual del buffer, que ahora es { blob, time }
+  const frame = frameBuffer[currentIndex];
+  const canvas = annotatedCanvasRef.current;
+  if (!frame || !canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  let didCancel = false;
+
+  // paso asíncrono: blob → ImageBitmap
+
+  createImageBitmap(frame.blob)
+    .then((bitmap) => {
+      if (didCancel) {
+        // el índice cambió antes de terminar de crear el bitmap
+        bitmap.close?.();
+        return;
+      }
+      // ajusta tamaño del canvas al del bitmap
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      // dibuja
+      ctx.drawImage(bitmap, 0, 0);
+      // limpia recursos si es posible
+      bitmap.close?.();
+    })
+    .catch((err) => {
+      console.error("Error creando ImageBitmap:", err);
+    });
+
+  // cleanup si currentIndex cambia antes de que termine createImageBitmap
+  return () => {
+    didCancel = true;
+  };
+}, [currentIndex]);
+
+// Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte:
+useEffect(() => {
+  if (!liveFrame) return;
+  // Solo pinta el liveFrame si está activo el modo live
+  if (!wasLiveRef.current) return;
+
+  const canvas = annotatedCanvasRef.current;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const [w, h] = resolutionStreaming.split("x").map(Number);
+  canvas.width = w;
+  canvas.height = h;
+
+  // Dibuja el bitmap completo (full-res se redimensiona al tamaño de canvas)
+  ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
+}, [liveFrame, resolutionStreaming]);
+
+useEffect(() => {
+  if (!isPlaying) return;
+  let rafId: number;
+  let lastTime = performance.now();
+
+  const loop = (now: number) => {
+    const elapsed = now - lastTime;
+    const interval = 1000 / fpsLimit / playbackSpeed;
+    if (elapsed >= interval) {
+      setCurrentIndex((i) => {
+        const next = Math.min(i + 1, frameBuffer.length - 1);
+        if (next === frameBuffer.length - 1) {
+          setIsPlaying(false);
+          wasLiveRef.current = true;
+        }
+        return next;
+      });
+      lastTime = now;
+    }
+    if (isPlaying) rafId = requestAnimationFrame(loop);
+  };
+  rafId = requestAnimationFrame(loop);
+  return () => cancelAnimationFrame(rafId);
+}, [isPlaying, fpsLimit, playbackSpeed, frameBuffer.length]);
 
   useEffect(() => {
     const checkHardwareStatus = async () => {
@@ -142,6 +351,7 @@ export default function DashboardPage() {
     }
     listarCamaras();
   }, []);
+
 
   // Cambiar a cámara seleccionada
   useEffect(() => {
@@ -178,7 +388,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (
-      !isTracking ||
+      !isTracking || 
       !videoRef.current ||
       !rawCanvasRef.current ||
       !annotatedCanvasRef.current
@@ -188,6 +398,14 @@ export default function DashboardPage() {
 
     const intervalId = setInterval(() => {
       const videoEl = videoRef.current!;
+
+      if (videoEl.ended || videoEl.paused) {
+        console.log("🛑 Video finalizado o pausado, deteniendo envío");
+        clearInterval(intervalId);
+        setIsVideoEnded(true);     // opcional
+        return;
+      }
+
       const canvas = rawCanvasRef.current!;
       const [width, height] = selectedResolution.split("x").map(Number);
       if (ws.readyState !== WebSocket.OPEN) return;
@@ -293,13 +511,14 @@ export default function DashboardPage() {
       setSelectedDevice("");
       setSelectedId("");
       setStream(false);
-    }
 
+    }
+    setIsVideoEnded(false);
     setDetections([]);
     setIsTracking(false);
   };
 
-  const downloadRecording = async () => {
+const downloadRecording = async () => {
     try {
       const response = await fetch("http://localhost:8000/stop_recording/", {
         method: "POST",
@@ -334,16 +553,25 @@ export default function DashboardPage() {
     }
   };
 
-  const handleResolutionChange = async (e) => {
-    setSelectedResolution(e.target.value);
+
+
+
+  const handleResolutionChange = async (
+    e: React.ChangeEvent<HTMLSelectElement>
+  ): Promise<void> => {
+
     const newRes = e.target.value;
     setSelectedResolution(newRes);
+    console.log("entro al handle video change", newRes);
+
   };
 
   const handleStartTracking = async () => {
     connect(); // abrís el socket acá
     await waitUntilReady(); // esperás a que responda con “ready”
     setIsTracking(true);
+    resetPlaybackState();  // 👈 limpiás todo antes de empezar
+    resetFirstFrameTime();
     setVideoSrc(null);
     setIsCameraActive(true);
     if (
@@ -384,7 +612,7 @@ export default function DashboardPage() {
   };
 
   const resetId = async () => {
-    setSelectedId(null);
+    setSelectedId("");
     await fetch("http://localhost:8000/clear_id/", {
       method: "POST",
     });
@@ -477,6 +705,12 @@ export default function DashboardPage() {
   };
 
 
+  const elapsedSec =
+  currentIndex >= 0 &&
+  frameBuffer[currentIndex] &&
+  firstFrameTimeRef.current !== null
+    ? ((frameBuffer[currentIndex].time - firstFrameTimeRef.current) / 1000).toFixed(1)
+    : "0.0";
 
   return (
     <div className={styles.layoutContainer}>
@@ -489,6 +723,8 @@ export default function DashboardPage() {
             {"<"}
           </button>
 
+              
+          
           {/* Nueva sección Selección de Resolución */}
           <details className={styles.trackingDropdown}>
             <summary>Selección de Resolución</summary>
@@ -577,6 +813,8 @@ export default function DashboardPage() {
                   }
                 />
               </div>
+
+
             </div>
           </details>
         </div>
@@ -703,6 +941,8 @@ export default function DashboardPage() {
                   ref={annotatedCanvasRef}
                   className={styles.videoElement}
                 />
+
+             
               </>
             ) : isCameraActive || isStreaming ? (
               <video
@@ -717,6 +957,75 @@ export default function DashboardPage() {
               </p>
             )}
           </div>
+
+            {/* Controles siempre visibles debajo del video */}
+            <div className={styles.bottomControls}>
+            <div style={{ marginTop: 10 }}>
+              {isPlaying ? (
+                <span style={{ color: "#0af" }}>🎞️ Reproduciendo ({playbackSpeed}x)</span>
+              ) : wasLiveRef && isVideoEnded ? (
+                <span style={{ color: "yellow", fontWeight: "bold" }}> FIN De Video</span>
+              ): wasLiveRef ? (
+                <span style={{ color: "red", fontWeight: "bold" }}>🔴 EN VIVO</span>
+              ) : (
+                <span style={{ color: "#999" }}>⏸️ Pausado</span>
+              )}
+            </div>
+              <div className={styles.bottomControlsInner}>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(0, frameBuffer.length - 1)}
+                  value={currentIndex}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    wasLiveRef.current = false;  // sales de live
+                    setIsPlaying(false);         // pausa cualquier playback actual
+                    setCurrentIndex(v);
+                  }}
+                  disabled={frameBuffer.length === 0}
+                />
+              <span>{elapsedSec} s</span>
+              <label>
+                Velocidad:
+                <select
+                  value={playbackSpeed}
+                  onChange={e => setPlaybackSpeed(Number(e.target.value))}
+                  disabled={!isPlaying}
+                >
+                  <option value={0.5}>0.5x</option>
+                  <option value={1}>1x</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={2}>2x</option>
+                </select>
+              </label>
+              <button
+                onClick={() => {
+                  setIsPlaying(!isPlaying);
+                  // si arrancas a reproducir desde mid, asegúrate que no vuelvas a live antes
+                  wasLiveRef.current = false;
+                }}
+                disabled={frameBuffer.length === 0}
+              >
+                {isPlaying ? "⏸️ Pausar" : `▶️ Play (${playbackSpeed}x)`}
+              </button>
+              <button
+                onClick={() => {
+                  // Ir en vivo
+                  wasLiveRef.current = true;
+                  setIsPlaying(false);
+                  const last = frameBuffer.length - 1;
+                  setCurrentIndex(last);
+                }}
+                disabled={wasLiveRef.current}
+              >
+                🔴 Live
+              </button>
+              {isVideoEnded && <div className={styles.notice}>🎉 El video terminó de analizarse</div>}
+              </div>
+              </div>
+
+          
 
           <input
             type="file"

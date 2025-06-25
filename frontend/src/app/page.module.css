@@ -301,3 +301,39 @@
   align-items: center;
   gap: 6px;
 }
+
+.bottomControls {
+  margin-top: 10px;
+  background: rgba(0,0,0,0.5);
+  padding: 8px 16px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;          /* ocupa todo el ancho del contenedor padre */
+  max-width: 100vw;     /* opcional: máximo ancho igual al viewport */
+  padding: 0 10px;      /* opcional para algo de margen lateral */
+  box-sizing: border-box;
+}
+.bottomControlsContainer {
+  margin-top: 8px;
+  width: 100%;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+  /* Puedes agregar estilos para fondo, padding, etc */
+  background-color: #222;
+  color: white;
+  padding: 8px;
+  border-radius: 6px;
+  position: fixed; bottom: 0; width: 100%;
+}
+
+
+.bottomControls input[type="range"] {
+  width: 100%;
+  margin: 0;            /* elimina margen por defecto */
+  /* Opcional: estilo para que quede más visible */
+  height: 8px;
+  cursor: pointer;
+}

@@ -30,6 +30,8 @@ export default function DashboardPage() {
 
   const [isRecording, setIsRecording] = useState(false);
 
+  const [metrics, setMetrics] = useState<any>(null);
+
   // Estados para las barras laterales
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false); // Izquierda
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false); // Derecha
@@ -67,9 +69,23 @@ export default function DashboardPage() {
       onMessage: (evt: MessageEvent) => {
         if (typeof evt.data === "string") {
           const msg = JSON.parse(evt.data);
-          if (msg.type === "lista_de_ids") {
 
-            // Aca estan los datos
+          // Manejar el mensaje de métricas y detecciones
+          if (msg.type === "metrics_and_detections") {
+            // Detecciones actuales
+            setDetections(msg.detections);
+
+            // Métricas (puedes adaptarlas según tu interfaz)
+            console.log("Métricas recibidas:", msg.metrics);
+
+            // Ejemplo: Actualizar un estado para métricas si es necesario
+            setMetrics(msg.metrics);
+
+            if (msg.selected_id == null) setSelectedId("");
+          }
+
+          // Manejar el mensaje existente "lista_de_ids" (opcional si aún lo usas)
+          if (msg.type === "lista_de_ids") {
             setDetections(msg.detections);
             if (msg.selected_id == null) setSelectedId("");
           }

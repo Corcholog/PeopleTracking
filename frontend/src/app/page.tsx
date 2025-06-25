@@ -34,6 +34,11 @@ export default function DashboardPage() {
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false); // Izquierda
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false); // Derecha
 
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+
+  const toggleSection = (section: string) => {
+    setActiveSection((prev) => (prev === section ? null : section));
+  };
 
   useEffect(() => {
     const checkBackendReady = async () => {
@@ -369,6 +374,19 @@ export default function DashboardPage() {
     });
     setSelectedId("");
   };
+
+  const handleMetricasGenerales = async () => {
+    //Tomar las metricas que envia el backend
+  };
+
+  const handleMetricasIndividuales = async (id: number) => {
+    //Tomar las metricas que envia el backend
+  };
+
+  const handleMetricasGrupales = async (id: number) => {
+    //Tomar las metricas que envia el backend
+  };
+
   useEffect(() => {
     const sendTrackingConfig = async () => {
       if (isTracking) {
@@ -705,37 +723,58 @@ export default function DashboardPage() {
           >
             {">"}
           </button>
-
-          {/* ✅ NUEVO CONTENEDOR */}
           <div className={styles.rightSidebarContent}>
-            <details className={styles.trackingDropdown}>
-              <summary>Ver métricas generales</summary>
-              <div className={styles.optionsContainer}>
-                <p>Contenido del panel derecho para las métricas</p>
-              </div>
-            </details>
+            {/* Métricas generales */}
+            <div className={styles.metricSection}>
+              <button onClick={() => {toggleSection("generales"); handleMetricasGenerales();}}>
+                {activeSection === "generales" ? "▼" : "►"} Ver métricas generales
+              </button>
+              {activeSection === "generales" && (
+                <div className={styles.metricContent}>
+                  <p>Contenido del panel derecho para las métricas</p>
+                </div>
+              )}
+            </div>
 
-            <details className={styles.zoomDropdown}>
-              <summary>Métricas individuales</summary>
-              <div className={styles.zoomScrollContainer}>
-                {!isStopping &&
-                  detections.map((det) => (
-                    <button key={det.id}>Ver métricas del ID {det.id}</button>
-                  ))}
-              </div>
-            </details>
+            {/* Métricas individuales */}
+            <div className={styles.metricSection}>
+              <button onClick={() => toggleSection("individuales")}>
+                {activeSection === "individuales" ? "▼" : "►"} Ver métricas individuales
+              </button>
+              {activeSection === "individuales" && (
+                <div className={styles.metricContent}>
+                  {!isStopping &&
+                    detections.map((det) => (
+                      <button
+                        key={det.id}
+                        onClick={() => handleMetricasIndividuales(det.id)}
+                      >
+                        Ver métricas del ID {det.id}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
 
-            <details className={styles.zoomDropdown}>
-              <summary>Métricas grupales</summary>
-              <div className={styles.zoomScrollContainer}>
-                {!isStopping &&
-                  detections.map((det) => (
-                    <button key={det.id}>Ver métricas del grupo ID {det.id}</button>
-                  ))}
-              </div>
-            </details>
+            {/* Métricas grupales */}
+            <div className={styles.metricSection}>
+              <button onClick={() => toggleSection("grupales")}>
+                {activeSection === "grupales" ? "▼" : "►"} Ver métricas grupales
+              </button>
+              {activeSection === "grupales" && (
+                <div className={styles.metricContent}>
+                  {!isStopping &&
+                    detections.map((det) => (  //Reemplzar detections por la lista de IDs de grupos que me tienen que pasar desde el backend
+                      <button key={det.id} onClick={() => handleMetricasGrupales(det.id)}>
+                        Ver métricas del grupo ID {det.id}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
+
       )}
 
       {/* Boton para expandir sidebar derecha */}

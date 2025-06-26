@@ -252,6 +252,7 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
       setSelectedDevice("");
       setStream(false);
       setDetections([]);
+      setLiveFrame(null);
       // Limpiar también las métricas temporales
       setLatestMetrics(null);
       setLatestDetections([]);
@@ -267,6 +268,13 @@ useEffect(() => {
   const frame = frameBuffer[currentIndex];
   const canvas = annotatedCanvasRef.current;
   if (!frame || !canvas) return;
+
+  if (frame.metrics) {
+    setMetrics(frame.metrics);
+  }
+  if (frame.detections) {
+    setDetections(frame.detections);
+  }
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -298,12 +306,11 @@ useEffect(() => {
   return () => {
     didCancel = true;
   };
-}, [currentIndex]);
+}, [currentIndex, frameBuffer]);
 
 // Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte:
 useEffect(() => {
   if (!liveFrame) return;
-  // Solo pinta el liveFrame si está activo el modo live
   if (!wasLiveRef.current) return;
 
   const canvas = annotatedCanvasRef.current;
@@ -315,9 +322,8 @@ useEffect(() => {
   canvas.width = w;
   canvas.height = h;
 
-  // Dibuja el bitmap completo (full-res se redimensiona al tamaño de canvas)
   ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
-}, [liveFrame, resolutionStreaming]);
+}, [liveFrame, resolutionStreaming, wasLiveRef.current]);
 
 useEffect(() => {
   if (!isPlaying) return;
@@ -579,7 +585,10 @@ const downloadRecording = async () => {
     e: React.ChangeEvent<HTMLSelectElement>
   ): Promise<void> => {
 
-    const newRes = e.target.value;
+    let newRes = e.target.value;
+    if (newRes === "4k") newRes = "3840x2160";
+    if (newRes === "2k") newRes = "2560x1440";
+
     setSelectedResolution(newRes);
     console.log("entro al handle video change", newRes);
 
@@ -788,7 +797,7 @@ const downloadRecording = async () => {
             <summary> Configuración tracking</summary>
             <div className={styles.optionsContainer}>
               {/* Unidad de procesamiento */}
-              {!isTracking && !isStopping && hasGPU && (
+              {!isTracking && !isStopping && hasGPU === true && (
                 <div className={styles.trackingOption}>
                   <label>Unidad de procesamiento:</label>
                   <br />
@@ -982,9 +991,9 @@ const downloadRecording = async () => {
             <div style={{ marginTop: 10 }}>
               {isPlaying ? (
                 <span style={{ color: "#0af" }}>🎞️ Reproduciendo ({playbackSpeed}x)</span>
-              ) : wasLiveRef && isVideoEnded ? (
+              ) : wasLiveRef.current && isVideoEnded ? ( // Cambiado wasLiveRef por wasLiveRef.current
                 <span style={{ color: "yellow", fontWeight: "bold" }}> FIN De Video</span>
-              ): wasLiveRef ? (
+              ) : wasLiveRef.current ? ( // Cambiado wasLiveRef por wasLiveRef.current
                 <span style={{ color: "red", fontWeight: "bold" }}>🔴 EN VIVO</span>
               ) : (
                 <span style={{ color: "#999" }}>⏸️ Pausado</span>

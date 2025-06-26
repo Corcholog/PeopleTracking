@@ -460,3 +460,37 @@
   height: 8px;
   cursor: pointer;
 }
+
+.tableMetricas {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+.tableMetricas th,
+.tableMetricas td {
+  border: 1px solid #98878F;
+  padding: 6px 8px;
+  text-align: center;
+  color: #eee;
+}
+
+.tableMetricas th {
+  background-color: #0f1624;
+  font-weight: bold;
+}
+
+.tableMetricas tr:nth-child(even) {
+  background-color: #1c2535;
+}
+
+.tableMetricas tr:nth-child(odd) {
+  background-color: #192231;
+}
+
+.selectedButton {
+  background-color: #98878F !important;
+  color: #192231 !important;
+  font-weight: bold;
+  border: 1px solid #ffffff;
+}

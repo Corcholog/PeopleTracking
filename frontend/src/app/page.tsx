@@ -1,6 +1,6 @@
 "use client";
 import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 //import { save } from '@tauri-apps/plugin-dialog';
 //import { writeFile  } from '@tauri-apps/plugin-fs';
@@ -35,6 +35,10 @@ export default function DashboardPage() {
 
   const [metrics, setMetrics] = useState<any>(null);
 
+  const [groupDetections, setGroupDetections] = useState<Array<{ id_grupo: number; grupo_ids: number[] }>>([]);
+
+  const [historialMetricasGenerales, setHistorialMetricasGenerales] = useState<any[]>([]);
+
   // Estados para las barras laterales
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false); // Izquierda
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false); // Derecha
@@ -43,6 +47,8 @@ export default function DashboardPage() {
 
   const toggleSection = (section: string) => {
     setActiveSection((prev) => (prev === section ? null : section));
+    setGrupoSeleccionado(null);
+    setIdsSeleccionados([]);
   };
   //parte de usar permitir ver frames anteriores:
   // número máximo de frames a guardar
@@ -60,6 +66,16 @@ const [isPlaying, setIsPlaying] = useState(false);
 const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
 const firstFrameTimeRef = useRef<number | null>(null);
 const [isVideoEnded, setIsVideoEnded] = useState(false);
+
+const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
+
+const toggleSeleccionId = (id: number) => {
+  setIdsSeleccionados((prev) =>
+    prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+  );
+};
+
+const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
 
 // Estado temporal para almacenar las últimas métricas recibidas
 const [latestMetrics, setLatestMetrics] = useState<any>(null);
@@ -153,6 +169,9 @@ const resetPlaybackState = () => {
   setCurrentIndex(-1);
   firstFrameTimeRef.current = null;
   wasLiveRef.current = true;
+  setHistorialMetricasGenerales([]);
+  setIdsSeleccionados([]);
+  setGrupoSeleccionado(null);
 };
 
   useEffect(() => {
@@ -190,6 +209,24 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
           setMetrics(msg.metrics);
           
           if (msg.selected_id == null) setSelectedId("");
+
+          if (msg.metrics?.groups) {
+            const grupos = msg.metrics.groups.map((g: any) => ({
+              id_grupo: g.id_grupo[0],
+              grupo_ids: g.grupo_ids
+            }));
+            setGroupDetections(grupos);
+          }
+
+          if (msg.metrics?.tracking_data) {
+            setHistorialMetricasGenerales((prev) => {
+              const yaExiste = prev.some((m) => m.frame_number === msg.metrics.frame_number);
+              if (!yaExiste) {
+                return [...prev, msg.metrics];
+              }
+              return prev;
+            });
+          }
 
           // Convertir base64 a blob
           const imageData = atob(msg.image);
@@ -252,6 +289,7 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
       setSelectedDevice("");
       setStream(false);
       setDetections([]);
+      setGroupDetections([]);
       // Limpiar también las métricas temporales
       setLatestMetrics(null);
       setLatestDetections([]);
@@ -637,19 +675,7 @@ const downloadRecording = async () => {
     });
     setSelectedId("");
   };
-
-  const handleMetricasGenerales = async () => {
-    //Tomar las metricas que envia el backend
-  };
-
-  const handleMetricasIndividuales = async (id: number) => {
-    //Tomar las metricas que envia el backend
-  };
-
-  const handleMetricasGrupales = async (id: number) => {
-    //Tomar las metricas que envia el backend
-  };
-
+  
   useEffect(() => {
     const sendTrackingConfig = async () => {
       if (isTracking) {
@@ -1070,12 +1096,45 @@ const downloadRecording = async () => {
           <div className={styles.rightSidebarContent}>
             {/* Métricas generales */}
             <div className={styles.metricSection}>
-              <button onClick={() => {toggleSection("generales"); handleMetricasGenerales();}}>
+              <button onClick={() => {toggleSection("generales");}}>
                 {activeSection === "generales" ? "▼" : "►"} Ver métricas generales
               </button>
               {activeSection === "generales" && (
                 <div className={styles.metricContent}>
-                  <p>Contenido del panel derecho para las métricas</p>
+                  {!isStopping && historialMetricasGenerales.filter(
+                        (m) => m.frame_number <= frameBuffer[currentIndex]?.metrics?.frame_number
+                      ).length > 0 ? (
+                        <table className={styles.tableMetricas}>
+                          <thead>
+                            <tr>
+                              <th>ID Persona</th>
+                              <th>ID Frame</th>
+                              <th>X1</th>
+                              <th>X2</th>
+                              <th>Y1</th>
+                              <th>Y2</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {historialMetricasGenerales
+                              .filter((m) => m.frame_number <= frameBuffer[currentIndex]?.metrics?.frame_number)
+                              .flatMap((frameData: any) =>
+                                frameData.tracking_data.map((p: any, i: number) => (
+                                  <tr key={`${frameData.frame_number}-${i}`}>
+                                    <td>{p.id_persona}</td>
+                                    <td>{frameData.frame_number}</td>
+                                    <td>{p.bbox[0]}</td>
+                                    <td>{p.bbox[2]}</td>
+                                    <td>{p.bbox[1]}</td>
+                                    <td>{p.bbox[3]}</td>
+                                  </tr>
+                                ))
+                              )}
+                          </tbody>
+                        </table>
+                      ) : (
+                  <p>No hay métricas disponibles</p>
+                )}
                 </div>
               )}
             </div>
@@ -1087,11 +1146,12 @@ const downloadRecording = async () => {
               </button>
               {activeSection === "individuales" && (
                 <div className={styles.metricContent}>
-                  {!isStopping &&
-                    detections.map((det) => (
+                  {!isStopping && isTracking &&
+                    frameBuffer[currentIndex]?.detections?.map((det) => (
                       <button
                         key={det.id}
-                        onClick={() => handleMetricasIndividuales(det.id)}
+                        onClick={() => toggleSeleccionId(det.id)}
+                        className={idsSeleccionados.includes(det.id) ? styles.selectedButton : ""}
                       >
                         Ver métricas del ID {det.id}
                       </button>
@@ -1107,10 +1167,12 @@ const downloadRecording = async () => {
               </button>
               {activeSection === "grupales" && (
                 <div className={styles.metricContent}>
-                  {!isStopping &&
-                    detections.map((det) => (  //Reemplzar detections por la lista de IDs de grupos que me tienen que pasar desde el backend
-                      <button key={det.id} onClick={() => handleMetricasGrupales(det.id)}>
-                        Ver métricas del grupo ID {det.id}
+                  {!isStopping && isTracking &&
+                    frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: any) => (
+                      <button key={grupo.id_grupo[0]}
+                        onClick={() => {setGrupoSeleccionado(grupo.id_grupo[0]);}}
+                        className={grupoSeleccionado === grupo.id_grupo[0] ? styles.selectedButton : ""}>
+                        Ver métricas del grupo ID {grupo.id_grupo[0]}
                       </button>
                     ))}
                 </div>

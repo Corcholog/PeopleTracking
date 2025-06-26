@@ -47,14 +47,24 @@ export default function DashboardPage() {
   //parte de usar permitir ver frames anteriores:
   // número máximo de frames a guardar
 const [maxBuffer, setMaxBuffer] = useState<number>(5000);
-type FrameBlob = { blob: Blob; time: number };
-const [frameBuffer, setFrameBuffer] = useState<FrameBlob[]>([]);
+type FrameWithMetrics = { 
+  blob: Blob; 
+  time: number; 
+  metrics?: any; // Las métricas asociadas a este frame
+  detections?: Array<{ id: number; bbox: number[] }>; // Detecciones asociadas
+};
+const [frameBuffer, setFrameBuffer] = useState<FrameWithMetrics[]>([]);
 const [currentIndex, setCurrentIndex] = useState<number>(-1);
 const wasLiveRef = useRef(true);
 const [isPlaying, setIsPlaying] = useState(false);
 const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
 const firstFrameTimeRef = useRef<number | null>(null);
 const [isVideoEnded, setIsVideoEnded] = useState(false);
+
+// Estado temporal para almacenar las últimas métricas recibidas
+const [latestMetrics, setLatestMetrics] = useState<any>(null);
+const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
+
 // 1) Define un estado para el live frame:
 const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
 
@@ -166,81 +176,90 @@ const resetPlaybackState = () => {
   }, []);
 
   // Nuevo uso del WebSocket
-  const { send, waitUntilReady, isConnected, isReady, connect, ws } =
-    useWebSocket({
-      url: "ws://localhost:8000/ws/analyze/",
-      onMessage: async (evt: MessageEvent) => {
-        if (typeof evt.data === "string") {
-          const msg = JSON.parse(evt.data);
+const { send, waitUntilReady, isConnected, isReady, connect, ws } =
+  useWebSocket({
+    url: "ws://localhost:8000/ws/analyze/",
+    onMessage: async (evt: MessageEvent) => {
+      if (typeof evt.data === "string") {
+        const msg = JSON.parse(evt.data);
 
-          // Manejar el mensaje de métricas y detecciones
-          if (msg.type === "metrics_and_detections") {
-            // Detecciones actuales
-            setDetections(msg.detections);
+        // Manejar el mensaje de métricas y detecciones
+        if (msg.type === "frame_with_metrics") {
+          // Actualizar estados existentes
+          setDetections(msg.detections);
+          setMetrics(msg.metrics);
+          
+          if (msg.selected_id == null) setSelectedId("");
 
-            // Métricas (puedes adaptarlas según tu interfaz)
-            console.log("Métricas recibidas:", msg.metrics);
-
-            // Ejemplo: Actualizar un estado para métricas si es necesario
-            setMetrics(msg.metrics);
-
-            if (msg.selected_id == null) setSelectedId("");
+          // Convertir base64 a blob
+          const imageData = atob(msg.image);
+          const bytes = new Uint8Array(imageData.length);
+          for (let i = 0; i < imageData.length; i++) {
+            bytes[i] = imageData.charCodeAt(i);
           }
-
-          // Manejar el mensaje existente "lista_de_ids" (opcional si aún lo usas)
-          if (msg.type === "lista_de_ids") {
-            setDetections(msg.detections);
-            if (msg.selected_id == null) setSelectedId("");
-          }
-        } else {
-          if (!(evt.data instanceof ArrayBuffer)) return;
-          const blob = new Blob([evt.data], { type: "image/jpeg" });
-          const now = Date.now();
+          const blob = new Blob([bytes], { type: "image/jpeg" });
+          
+          // Crear bitmap para live display
           const fullBmp = await createImageBitmap(blob);
+          const now = msg.timestamp || Date.now(); // usar timestamp del backend si está disponible
           setLiveFrame({ bitmap: fullBmp, time: now });
 
-          // 2) Buffer downsample + JPEG
-          //    calculamos anchura/altura de buffer según resolutionStreaming
+          // Buffer downsample + JPEG para el buffer de reproducción
           const [bw, bh] = resolutionStreaming.split("x").map(Number);
           const off = document.createElement("canvas");
           off.width = bw;
           off.height = bh;
           const octx = off.getContext("2d")!;
-          // redibuja el fullBmp escalado a bw×bh
           octx.drawImage(fullBmp, 0, 0, bw, bh);
+          
           off.toBlob((smallBlob) => {
             if (!smallBlob) return;
 
-              setFrameBuffer((buf) => {
-                const newFrame = { blob: smallBlob, time: now };
-                const next = buf.length >= maxBuffer
-                  ? [...buf.slice(1), newFrame]
-                  : [...buf, newFrame];
-                registerFrameTime(now);
-                // 3) Si estamos en live, avanza el índice al último
-                if (wasLiveRef.current) {
-                  setCurrentIndex(next.length - 1);
-                }
-                return next;
-              });
-            }, "image/jpeg", 0.7);
-  
+            setFrameBuffer((buf) => {
+              // Crear el frame con métricas YA sincronizadas
+              const newFrame: FrameWithMetrics = { 
+                blob: smallBlob, 
+                time: now,
+                metrics: msg.metrics, // ✅ Métricas ya sincronizadas
+                detections: msg.detections // ✅ Detecciones ya sincronizadas
+              };
+              
+              const next = buf.length >= maxBuffer
+                ? [...buf.slice(1), newFrame]
+                : [...buf, newFrame];
+              registerFrameTime(now);
+              
+              // Si estamos en live, avanza el índice al último
+              if (wasLiveRef.current) {
+                setCurrentIndex(next.length - 1);
+              }
+              return next;
+            });
+          }, "image/jpeg", 0.7);
         }
-      },
-      onStopped: () => {
-        setIsStopping(false);
-        setIsCameraActive(false);
-        setIsTracking(false);
-        setVideoSrc(null);
-        setSelectedDevice("");
-        setStream(false);
-        setDetections([]);
-        resetFirstFrameTime(); // 👈 acá reiniciás el tiempo
-        resetPlaybackState();
-        setIsVideoEnded(false);
-      },
-    });
 
+        // Manejar el mensaje existente "lista_de_ids" 
+        if (msg.type === "lista_de_ids") {
+          if (msg.selected_id == null) setSelectedId("");
+        }
+      }
+    },
+    onStopped: () => {
+      setIsStopping(false);
+      setIsCameraActive(false);
+      setIsTracking(false);
+      setVideoSrc(null);
+      setSelectedDevice("");
+      setStream(false);
+      setDetections([]);
+      // Limpiar también las métricas temporales
+      setLatestMetrics(null);
+      setLatestDetections([]);
+      resetFirstFrameTime();
+      resetPlaybackState();
+      setIsVideoEnded(false);
+    },
+  });
 
 useEffect(() => {
   if (wasLiveRef.current) return;

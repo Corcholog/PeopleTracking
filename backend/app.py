@@ -19,8 +19,9 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks
 from collections import defaultdict, deque
-from typing import List, Dict, Tuple
-
+from typing import List, Dict
+import base64
+import time
 
 # 1) Detecta si está bundlado o en desarrollo
 if getattr(sys, 'frozen', False):
@@ -199,7 +200,7 @@ def detect_directions(frame_number, tracks):
     """
     global previous_directions, history_points, direction_strings
 
-    direction_strings = []
+    direction_strings = defaultdict(list)
 
     for t in tracks:
         idPersona = t.track_id
@@ -225,6 +226,7 @@ def detect_directions(frame_number, tracks):
             direction = vec / norm
 
         dir_text = direction_to_text(direction)
+        
         direction_strings[idPersona].append(dir_text)
 
         previous_directions[idPersona] = direction
@@ -295,7 +297,7 @@ def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
 
         if len(grupo) > 1:
             grupos_detectados_frame.append({
-                'id_grupo': grupo_id,
+                'id_grupo': [grupo_id],
                 'grupo_ids': grupo
             })
             grupo_id += 1
@@ -447,6 +449,7 @@ async def analyze(ws: WebSocket):
                 directions={person: direction_strings[person] for person in direction_strings},
                 groups=grupos_actuales
             )
+            print(f"METRICAS: \n{metrics}\n\n")
 
             # Enviar datos y métricas al frontend
             await ws.send_json({
@@ -459,7 +462,16 @@ async def analyze(ws: WebSocket):
             frame_number += 1
 
             _, buf = cv2.imencode(".jpg", annotated)
-            await ws.send_bytes(buf.tobytes())
+            combined_data = {
+                "type": "frame_with_metrics",
+                "frame_number": frame_number,
+                "metrics": metrics.model_dump(),
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "selected_id": current_id,
+                "image": base64.b64encode(buf.tobytes()).decode(),
+                "timestamp": time.time() * 1000  # timestamp en milisegundos
+            }
+            await ws.send_json(combined_data)
 
             if stream_url and video_url:
                 await asyncio.sleep(0.03)

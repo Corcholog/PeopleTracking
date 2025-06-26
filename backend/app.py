@@ -19,7 +19,9 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks
 from collections import defaultdict, deque
-
+from typing import List, Dict
+import base64
+import time
 
 # 1) Detecta si está bundlado o en desarrollo
 if getattr(sys, 'frozen', False):
@@ -96,6 +98,16 @@ class ConfigPayload(BaseModel):
     gpu: bool = False
     fps: int = fps_default
 
+class Metrics(BaseModel):
+    frame_number: int
+    total_tracked: int
+    tracking_data: List[Dict[str, any]]  # Datos generales (track_id, centro, bbox)
+    directions: Dict[int, List[str]]  # ID de persona -> direcciones
+    groups: List[Dict[str, List[int]]]  # ID de grupo y miembros
+
+    class Config:
+        arbitrary_types_allowed = True
+
 # ---------------------------------------------------
 # 9) Utilidad de zoom (opcional)
 # ---------------------------------------------------
@@ -163,30 +175,32 @@ direction_strings = defaultdict(list) # Array indexed by idPersona, with directi
 def direction_to_text(vec):
     x, y = vec
     if np.allclose(vec, [0, 0]):
-        return "Stopped"
+        return "P" # Stopped
     angle = np.degrees(np.arctan2(y, x)) % 360
     if 337.5 <= angle or angle < 22.5:
-        return "East"
+        return "D" # East
     elif 22.5 <= angle < 67.5:
-        return "Northeast"
+        return "Q" # Northeast
     elif 67.5 <= angle < 112.5:
-        return "North"
+        return "W" # North
     elif 112.5 <= angle < 157.5:
-        return "Northwest"
+        return "E" # Northwest
     elif 157.5 <= angle < 202.5:
-        return "West"
+        return "A" # West
     elif 202.5 <= angle < 247.5:
-        return "Southwest"
+        return "Z" # Southwest
     elif 247.5 <= angle < 292.5:
-        return "South"
+        return "S" # South
     else:
-        return "Southeast"
+        return "C" # Southeast
 
 def detect_directions(frame_number, tracks):
     """
     Calcula la dirección actual por persona usando su historial y detecta cambios de rumbo.
     """
     global previous_directions, history_points, direction_strings
+
+    direction_strings = defaultdict(list)
 
     for t in tracks:
         idPersona = t.track_id
@@ -212,6 +226,7 @@ def detect_directions(frame_number, tracks):
             direction = vec / norm
 
         dir_text = direction_to_text(direction)
+        
         direction_strings[idPersona].append(dir_text)
 
         previous_directions[idPersona] = direction
@@ -282,7 +297,7 @@ def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
 
         if len(grupo) > 1:
             grupos_detectados_frame.append({
-                'id_grupo': grupo_id,
+                'id_grupo': [grupo_id],
                 'grupo_ids': grupo
             })
             grupo_id += 1
@@ -414,10 +429,49 @@ async def analyze(ws: WebSocket):
                     print(f"   Grupo {grupo['id_grupo']}: {grupo['grupo_ids']}")
             else:
                 print(f"🔹 Sin grupos detectados en frame {frame_number}")
+
+            metrics = Metrics(
+                frame_number=frame_number,
+                total_tracked=len(tracks),
+                tracking_data=[
+                    {
+                        "id_persona": data["id_persona"],
+                        "centro": data["centro"],
+                        "bbox": [
+                            t.bbox[0],
+                            t.bbox[1],
+                            t.bbox[2],
+                            t.bbox[3]
+                        ]
+                    }
+                    for t, data in zip(tracks, tracking_data_last_frame)
+                ],
+                directions={person: direction_strings[person] for person in direction_strings},
+                groups=grupos_actuales
+            )
+            print(f"METRICAS: \n{metrics}\n\n")
+
+            # Enviar datos y métricas al frontend
+            await ws.send_json({
+                "type": "metrics_and_detections",
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "metrics": metrics.model_dump(),
+                "selected_id": current_id
+            })
+
             frame_number += 1
 
             _, buf = cv2.imencode(".jpg", annotated)
-            await ws.send_bytes(buf.tobytes())
+            combined_data = {
+                "type": "frame_with_metrics",
+                "frame_number": frame_number,
+                "metrics": metrics.model_dump(),
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "selected_id": current_id,
+                "image": base64.b64encode(buf.tobytes()).decode(),
+                "timestamp": time.time() * 1000  # timestamp en milisegundos
+            }
+            await ws.send_json(combined_data)
 
             if stream_url and video_url:
                 await asyncio.sleep(0.03)

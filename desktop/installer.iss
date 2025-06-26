@@ -1,5 +1,5 @@
 #define MyAppName    "Followup"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define CUDA_URL "https://developer.download.nvidia.com/compute/cuda/12.9.0/network_installers/cuda_12.9.0_windows_network.exe"
 #define CUDA_TMPNAME "cuda_installer.exe"
 #define MUSIC_DLL    "MediaPlayer.dll"
@@ -65,7 +65,25 @@ begin
   else
     Result := '';
 end;
-
+procedure SetElevationBit(Filename: String);
+var
+  LBuffer: AnsiString;
+  LStream: TStream;
+begin
+  Filename := ExpandConstant(Filename);
+  Log('Setting elevation bit for ' + Filename);
+  LStream := TFileStream.Create(Filename, fmOpenReadWrite);
+  try
+    LStream.Position := 21;           // Posición del byte de elevación
+    SetLength(LBuffer, 1);
+    LStream.ReadBuffer(LBuffer, 1);
+    LBuffer[1] := Chr(Ord(LBuffer[1]) or $20); // Activar el bit
+    LStream.Position := LStream.Position - 1;
+    LStream.WriteBuffer(LBuffer, 1);
+  finally
+    LStream.Free;
+  end;
+end;
 function IsComponentInstalled(const Name: String): Boolean;
 var
   Rc: Integer;
@@ -180,7 +198,7 @@ Filename: "{tmp}\{#CUDA_TMPNAME}"; \
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\app.exe"
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\app.exe"; Tasks: desktopicon
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\app.exe"; AfterInstall: SetElevationBit('{userdesktop}\{#MyAppName}.lnk')
 
 [Tasks]
 Name: desktopicon; Description: "Crear acceso directo en el Escritorio"; Flags: unchecked

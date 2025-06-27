@@ -1102,16 +1102,36 @@ const downloadRecording = async () => {
             {">"}
           </button>
           <div className={styles.rightSidebarContent}>
-            {/* Métricas generales */}
-            <div className={styles.metricSection}>
-              <button onClick={() => {toggleSection("generales");}}>
-                {activeSection === "generales" ? "▼" : "►"} Ver métricas generales
+            {/* Navegación de secciones */}
+            <div className={styles.metricNavigation}>
+              <button
+                onClick={() => toggleSection("generales")}
+                className={`${styles.navButton} ${activeSection === "generales" ? styles.activeNavButton : ""}`}
+              >
+                Métricas Generales
               </button>
+              <button
+                onClick={() => toggleSection("individuales")}
+                className={`${styles.navButton} ${activeSection === "individuales" ? styles.activeNavButton : ""}`}
+              >
+                Métricas Individuales
+              </button>
+              <button
+                onClick={() => toggleSection("grupales")}
+                className={`${styles.navButton} ${activeSection === "grupales" ? styles.activeNavButton : ""}`}
+              >
+                Métricas Grupales
+              </button>
+            </div>
+
+            {/* Contenido de la sección activa */}
+            <div className={styles.metricMainContent}>
+              {/* Métricas generales */}
               {activeSection === "generales" && (
-                <div className={styles.metricContent}>
-                  {!isStopping && historialMetricasGenerales.filter(
-                        (m) => m.frame_number <= frameBuffer[currentIndex]?.metrics?.frame_number
-                      ).length > 0 ? (
+                <div className={styles.fullWidthMetricSection}>
+                  <div className={styles.metricContentFull}>
+                    {!isStopping && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                      <div className={styles.tableContainer}>
                         <table className={styles.tableMetricas}>
                           <thead>
                             <tr>
@@ -1124,71 +1144,191 @@ const downloadRecording = async () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {historialMetricasGenerales
-                              .filter((m) => m.frame_number <= frameBuffer[currentIndex]?.metrics?.frame_number)
-                              .flatMap((frameData: any) =>
-                                frameData.tracking_data.map((p: any, i: number) => (
-                                  <tr key={`${frameData.frame_number}-${i}`}>
-                                    <td>{p.id_persona}</td>
-                                    <td>{frameData.frame_number}</td>
-                                    <td>{p.bbox[0]}</td>
-                                    <td>{p.bbox[2]}</td>
-                                    <td>{p.bbox[1]}</td>
-                                    <td>{p.bbox[3]}</td>
-                                  </tr>
-                                ))
-                              )}
+                            {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((person: any, i: number) => (
+                              <tr key={`${frameBuffer[currentIndex]?.metrics?.frame_number}-${i}`}>
+                                <td>{person.id_persona}</td>
+                                <td>{frameBuffer[currentIndex]?.metrics?.frame_number}</td>
+                                <td>{person.bbox[0]}</td>
+                                <td>{person.bbox[2]}</td>
+                                <td>{person.bbox[1]}</td>
+                                <td>{person.bbox[3]}</td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
-                      ) : (
-                  <p>No hay métricas disponibles</p>
-                )}
+                      </div>
+                    ) : (
+                      <div className={styles.noDataMessage}>
+                        <p>No hay métricas disponibles</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
-            </div>
 
-            {/* Métricas individuales */}
-            <div className={styles.metricSection}>
-              <button onClick={() => toggleSection("individuales")}>
-                {activeSection === "individuales" ? "▼" : "►"} Ver métricas individuales
-              </button>
+              {/* Métricas individuales */}
               {activeSection === "individuales" && (
-                <div className={styles.metricContent}>
-                  {!isStopping && isTracking &&
-                    frameBuffer[currentIndex]?.detections?.map((det) => (
-                      <button
-                        key={det.id}
-                        onClick={() => toggleSeleccionId(det.id)}
-                        className={idsSeleccionados.includes(det.id) ? styles.selectedButton : ""}
-                      >
-                        Ver métricas del ID {det.id}
-                      </button>
-                    ))}
+                <div className={styles.fullWidthMetricSection}>
+                  <div className={styles.metricContentFull}>
+                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                      <div className={styles.individualMetricsGrid}>
+                        {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((personData: any) => {
+                          // Función para obtener el símbolo de dirección
+                          const getDirectionSymbol = (directionCode: string) => {
+                            const directionMap: { [key: string]: string } = {
+                              "P": "⏸️", // Stopped
+                              "D": "➡️", // East
+                              "Q": "↗️", // Northeast
+                              "W": "⬆️", // North
+                              "E": "↖️", // Northwest
+                              "A": "⬅️", // West
+                              "Z": "↙️", // Southwest
+                              "S": "⬇️", // South
+                              "C": "↘️"  // Southeast
+                            };
+                            return directionMap[directionCode] || "❓";
+                          };
+
+                          // Obtener la dirección de la persona actual
+                          const personDirection = frameBuffer[currentIndex]?.metrics?.directions?.[personData.id_persona.toString()];
+                          const directionSymbol = personDirection ? getDirectionSymbol(personDirection[0]) : "❓";
+
+                          return (
+                            <div 
+                              key={personData.id_persona} 
+                              className={`${styles.metricCard} ${idsSeleccionados.includes(personData.id_persona) ? styles.selectedCard : ""}`}
+                              onClick={() => toggleSeleccionId(personData.id_persona)}
+                            >
+                              <div className={styles.cardHeader}>
+                                <h4>ID {personData.id_persona}</h4>
+                                <span className={styles.cardStatus}>
+                                  {idsSeleccionados.includes(personData.id_persona) ? "Seleccionado" : "Click para seleccionar"}
+                                </span>
+                              </div>
+                              <div className={styles.cardContent}>
+                                <div className={styles.metricRow}>
+                                  <span className={styles.metricLabel}>Posición:</span>
+                                  <span className={styles.metricValue}>
+                                    ({personData.centro[0]}, {personData.centro[1]})
+                                  </span>
+                                </div>
+                                <div className={styles.metricRow}>
+                                  <span className={styles.metricLabel}>Dirección:</span>
+                                  <span className={styles.metricValue} style={{ fontSize: '1.2em' }}>
+                                    {directionSymbol}
+                                  </span>
+                                </div>
+                                <div className={styles.metricRow}>
+                                  <span className={styles.metricLabel}>Bbox:</span>
+                                  <span className={styles.metricValue}>
+                                    [{personData.bbox.join(', ')}]
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className={styles.noDataMessage}>
+                        <p>No hay datos de tracking disponibles</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
-            </div>
 
-            {/* Métricas grupales */}
-            <div className={styles.metricSection}>
-              <button onClick={() => toggleSection("grupales")}>
-                {activeSection === "grupales" ? "▼" : "►"} Ver métricas grupales
-              </button>
+              {/* Métricas grupales */}
               {activeSection === "grupales" && (
-                <div className={styles.metricContent}>
-                  {!isStopping && isTracking &&
-                    frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: any) => (
-                      <button key={grupo.id_grupo[0]}
-                        onClick={() => {setGrupoSeleccionado(grupo.id_grupo[0]);}}
-                        className={grupoSeleccionado === grupo.id_grupo[0] ? styles.selectedButton : ""}>
-                        Ver métricas del grupo ID {grupo.id_grupo[0]}
-                      </button>
-                    ))}
+                <div className={styles.fullWidthMetricSection}>
+                  <div className={styles.metricContentFull}>
+                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.groups?.length > 0 ? (
+                      <div className={styles.groupMetricsGrid}>
+                        {frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: any, index: number) => (
+                          <div 
+                            key={`grupo-${index}`}
+                            className={`${styles.metricCard} ${grupoSeleccionado === index ? styles.selectedCard : ""}`}
+                            onClick={() => setGrupoSeleccionado(index)}
+                          >
+                            <div className={styles.cardHeader}>
+                              <h4>Grupo {grupo.id_grupo[0]}</h4>
+                              <span className={styles.cardStatus}>
+                                {grupoSeleccionado === index ? "Seleccionado" : "Click para seleccionar"}
+                              </span>
+                            </div>
+                            <div className={styles.cardContent}>
+                              <div className={styles.metricRow}>
+                                <span className={styles.metricLabel}>Total Personas:</span>
+                                <span className={styles.metricValue}>{grupo.grupo_ids.length}</span>
+                              </div>
+                              <div className={styles.metricRow}>
+                                <span className={styles.metricLabel}>IDs del Grupo:</span>
+                                <span className={styles.metricValue}>
+                                  {grupo.grupo_ids.join(", ")}
+                                </span>
+                              </div>
+                              
+                              {/* Detalles expandidos cuando el grupo está seleccionado */}
+                              {grupoSeleccionado === index && (
+                                <div className={styles.expandedGroupDetails}>
+                                  {grupo.grupo_ids.map((personId: number) => {
+                                    // Buscar los datos de tracking de esta persona (opcional)
+                                    const personData = frameBuffer[currentIndex]?.metrics?.tracking_data?.find(
+                                      (p: any) => p.id_persona === personId
+                                    );
+                                    
+                                    // Obtener la dirección de esta persona (opcional)
+                                    const getDirectionSymbol = (directionCode: string) => {
+                                      const directionMap: { [key: string]: string } = {
+                                        "P": "⏸️", // Stopped
+                                        "D": "➡️", // East
+                                        "Q": "↗️", // Northeast
+                                        "W": "⬆️", // North
+                                        "E": "↖️", // Northwest
+                                        "A": "⬅️", // West
+                                        "Z": "↙️", // Southwest
+                                        "S": "⬇️", // South
+                                        "C": "↘️"  // Southeast
+                                      };
+                                      return directionMap[directionCode] || "❓";
+                                    };
+                                    
+                                    const personDirection = frameBuffer[currentIndex]?.metrics?.directions?.[personId.toString()];
+                                    const directionSymbol = personDirection ? getDirectionSymbol(personDirection[0]) : "❓";
+                                    
+                                    return (
+                                      <div key={personId} className={styles.memberDetail}>
+                                        <div className={styles.memberInfo}>
+                                          <span className={styles.memberId}>{personId}</span>
+                                          {personData && (
+                                            <span className={styles.memberPosition}>
+                                              Pos: ({personData.centro[0]}, {personData.centro[1]})
+                                            </span>
+                                          )}
+                                          <span className={styles.memberDirection}>
+                                            Dir: {directionSymbol}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={styles.noDataMessage}>
+                        <p>No hay grupos disponibles</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
-
       )}
 
       {/* Boton para expandir sidebar derecha */}

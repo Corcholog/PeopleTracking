@@ -1,6 +1,6 @@
 "use client";
 import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 //import { save } from '@tauri-apps/plugin-dialog';
 //import { writeFile  } from '@tauri-apps/plugin-fs';
@@ -67,19 +67,31 @@ const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
 const firstFrameTimeRef = useRef<number | null>(null);
 const [isVideoEnded, setIsVideoEnded] = useState(false);
 
-const [zoomEnabled, setZoomEnabled] = useState(false);
-const [zoomTarget, setZoomTarget] = useState<{
-  id: number | null;
-  center: [number, number] | null;
-}>({ id: null, center: null });
-const [zoomFactor, setZoomFactor] = useState(1.5);
-
 const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
 
 const toggleSeleccionId = (id: number) => {
-  setIdsSeleccionados((prev) =>
-    prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-  );
+  setIdsSeleccionados((prev) => {
+    const isCurrentlySelected = prev.includes(id);
+    
+    if (isCurrentlySelected) {
+      // Remover ID y su trayectoria
+      setTrayectorias(prevTray => {
+        const newTray = new Map(prevTray);
+        newTray.delete(id);
+        return newTray;
+      });
+      return prev.filter((i) => i !== id);
+    } else {
+      // Agregar ID y construir su trayectoria
+      const nuevaTrayectoria = construirTrayectoria(id);
+      setTrayectorias(prevTray => {
+        const newTray = new Map(prevTray);
+        newTray.set(id, nuevaTrayectoria);
+        return newTray;
+      });
+      return [...prev, id];
+    }
+  });
 };
 
 const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
@@ -87,6 +99,10 @@ const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
 // Estado temporal para almacenar las últimas métricas recibidas
 const [latestMetrics, setLatestMetrics] = useState<any>(null);
 const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
+
+// Estados para trayectorias
+const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
+const [mostrarTrayectorias, setMostrarTrayectorias] = useState(true);
 
 // 1) Define un estado para el live frame:
 const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
@@ -179,8 +195,7 @@ const resetPlaybackState = () => {
   setHistorialMetricasGenerales([]);
   setIdsSeleccionados([]);
   setGrupoSeleccionado(null);
-  setZoomEnabled(false);
-  setZoomTarget({ id: null, center: null });
+  setTrayectorias(new Map());
 };
 
   useEffect(() => {
@@ -247,14 +262,8 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
 
           // Crear bitmap para live display
           const fullBmp = await createImageBitmap(blob);
-          const now = msg.timestamp || Date.now();
-
-          //Aplicar zoom si está habilitado y hay un targetse
-          const liveBmp = zoomEnabled && zoomTarget.center
-              ? await applyZoom(fullBmp, zoomTarget.center, zoomFactor)
-              : fullBmp;
-
-          setLiveFrame({ bitmap: liveBmp, time: now });
+          const now = msg.timestamp || Date.now(); // usar timestamp del backend si está disponible
+          setLiveFrame({ bitmap: fullBmp, time: now });
 
 
           // Buffer downsample + JPEG para el buffer de reproducción
@@ -323,23 +332,6 @@ useEffect(() => {
   const canvas = annotatedCanvasRef.current;
   if (!frame || !canvas) return;
 
-  // Aplicar zoom si está habilitado
-  const drawFrame = async () => {
-    let bitmap = await createImageBitmap(frame.blob);
-    if (zoomEnabled && zoomTarget.center) {
-      bitmap = await applyZoom(bitmap, zoomTarget.center, zoomFactor);
-    }
-
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(bitmap, 0, 0);
-    bitmap.close?.();
-  };
-
-  drawFrame();
-
-
   if (frame.metrics) {
     setMetrics(frame.metrics);
   }
@@ -366,6 +358,9 @@ useEffect(() => {
       canvas.height = bitmap.height;
       // dibuja
       ctx.drawImage(bitmap, 0, 0);
+
+      dibujarTrayectorias(canvas);
+
       // limpia recursos si es posible
       bitmap.close?.();
     })
@@ -394,37 +389,9 @@ useEffect(() => {
   canvas.height = h;
 
   ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
+
+  dibujarTrayectorias(canvas);
 }, [liveFrame, resolutionStreaming, wasLiveRef.current]);
-
-// 🔥 Nuevo efecto para manejar el zoom
-  useEffect(() => {
-    const canvas = annotatedCanvasRef.current;
-    if (!canvas || !liveFrame) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const drawZoomedFrame = async () => {
-      try {
-        const bitmap = zoomEnabled && zoomTarget?.center
-            ? await applyZoom(liveFrame.bitmap, zoomTarget.center, zoomFactor)
-            : liveFrame.bitmap;
-
-        // Ajusta el canvas al tamaño del bitmap (original o zoomeado)
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        ctx.clearRect(0, 0, canvas.width, canvas.height); // Limpia antes de dibujar
-        ctx.drawImage(bitmap, 0, 0);
-
-
-        if (bitmap !== liveFrame.bitmap) bitmap.close();
-      } catch (error) {
-        console.error("Error dibujando zoom:", error);
-      }
-    };
-
-    drawZoomedFrame();
-  }, [liveFrame, zoomEnabled, zoomTarget, zoomFactor]); // Dependencias clave
 
 useEffect(() => {
   if (!isPlaying) return;
@@ -550,44 +517,6 @@ useEffect(() => {
 
     return () => clearInterval(intervalId);
   }, [isTracking, fpsLimit, isReady, isConnected, ws]);
-
-  const applyZoom = useCallback(async (
-      source: ImageBitmap | Blob,
-      center: [number, number] | null,
-      zoom: number
-  ): Promise<ImageBitmap> => {
-    if (!center || zoom <= 1.0) {
-      return source instanceof Blob ? await createImageBitmap(source) : source;
-    }
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    const bitmap = source instanceof Blob ? await createImageBitmap(source) : source;
-
-    // Ajusta el tamaño del canvas al del bitmap original
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-
-    // Calcula el área de zoom
-    const zoomWidth = bitmap.width / zoom;
-    const zoomHeight = bitmap.height / zoom;
-    const [cx, cy] = center;
-
-    // Asegúrate de que las coordenadas no excedan los límites
-    const x = Math.max(0, Math.min(cx - zoomWidth / 2, bitmap.width - zoomWidth));
-    const y = Math.max(0, Math.min(cy - zoomHeight / 2, bitmap.height - zoomHeight));
-
-    // Dibuja la porción zoomeada
-    ctx.drawImage(
-        bitmap,
-        x, y, zoomWidth, zoomHeight,  // Source rectangle
-        0, 0, canvas.width, canvas.height  // Destination rectangle
-    );
-
-    const zoomedBitmap = await createImageBitmap(canvas);
-    if (source !== bitmap) bitmap.close();
-    return zoomedBitmap;
-  }, []);
 
   const handleVideoChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -763,23 +692,20 @@ const downloadRecording = async () => {
     }
   };
 
-  const handleZoom = useCallback((id: number) => {
-    const detection = detections.find(d => d.id === id);
-    if (!detection) return;
-
-    const [x1, y1, x2, y2] = detection.bbox;
-    const center: [number, number] = [
-      (x1 + x2) / 2,
-      (y1 + y2) / 2
-    ];
-
-    setZoomTarget(prev =>
-        prev.id === id && prev.center
-            ? { id: null, center: null }
-            : { id, center }
-    );
-    setZoomEnabled(prev => !(prev && zoomTarget?.id === id));
-  }, [detections, zoomTarget?.id]);
+  const handleZoom = async (id: number) => {
+    setSelectedId(id.toString());
+    try {
+      await fetch("http://localhost:8000/set_id/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id }),
+      });
+    } catch (error) {
+      console.error("Error al enviar ID al backend:", error);
+    }
+  };
 
   const resetId = async () => {
     setSelectedId("");
@@ -870,6 +796,124 @@ const downloadRecording = async () => {
     ? ((frameBuffer[currentIndex].time - firstFrameTimeRef.current) / 1000).toFixed(1)
     : "0.0";
 
+
+  // Mapa de colores por dirección (evitando verde)
+  const directionColorMap: { [key: string]: string } = {
+    P: "hsl(0, 70%, 50%)",   // Stopped: Rojo
+    D: "hsl(60, 70%, 50%)",  // East: Amarillo
+    Q: "hsl(45, 70%, 50%)",  // Northeast: Amarillo-naranja
+    W: "hsl(90, 70%, 50%)",  // North: Verde claro (ligeramente diferente al verde de tracking)
+    E: "hsl(135, 70%, 50%)", // Northwest: Cian-verde
+    A: "hsl(180, 70%, 50%)", // West: Cian
+    Z: "hsl(225, 70%, 50%)", // Southwest: Azul
+    S: "hsl(270, 70%, 50%)", // South: Púrpura
+    C: "hsl(315, 70%, 50%)", // Southeast: Magenta
+  };
+
+  // Función para obtener color según la dirección
+  const getColorForDirection = (direction: string): string => {
+    return directionColorMap[direction] || "hsl(0, 0%, 50%)"; // Gris por defecto si no hay dirección
+  };
+
+  // Función para construir trayectoria de un ID específico
+  const construirTrayectoria = (idPersona: number): Array<{x: number, y: number, frameIndex: number}> => {
+    const puntos: Array<{x: number, y: number, frameIndex: number}> = [];
+    
+    frameBuffer.forEach((frame, frameIndex) => {
+      if (frame.metrics?.tracking_data) {
+        const personData = frame.metrics.tracking_data.find((p: any) => p.id_persona === idPersona);
+        if (personData && personData.centro) {
+          puntos.push({
+            x: personData.centro[0],
+            y: personData.centro[1],
+            frameIndex
+          });
+        }
+      }
+    });
+    
+    return puntos;
+  };
+
+  // Función para renderizar trayectorias en el canvas
+  const dibujarTrayectorias = (canvas: HTMLCanvasElement) => {
+    if (!mostrarTrayectorias || trayectorias.size === 0) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Obtener dimensiones del canvas
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+
+    // Obtener dimensiones originales de la resolución seleccionada
+    const [originalWidth, originalHeight] = selectedResolution.split("x").map(Number);
+
+    // Calcular factores de escala
+    const scaleX = canvasWidth / originalWidth;
+    const scaleY = canvasHeight / originalHeight;
+
+    trayectorias.forEach((puntos, idPersona) => {
+      if (puntos.length < 2) return;
+
+      // Filtrar puntos hasta el frame actual
+      const puntosHastaActual = puntos.filter(p => p.frameIndex <= currentIndex);
+      if (puntosHastaActual.length < 2) return;
+
+      // Dibujar segmentos de trayectoria
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+
+      for (let i = 1; i < puntosHastaActual.length; i++) {
+        const puntoActual = puntosHastaActual[i];
+        const puntoAnterior = puntosHastaActual[i - 1];
+
+        // Obtener la dirección del frame actual
+        const frameMetrics = frameBuffer[puntoActual.frameIndex]?.metrics;
+        const direction = frameMetrics?.directions?.[idPersona.toString()]?.[0] || "P";
+        ctx.strokeStyle = getColorForDirection(direction);
+
+        // Dibujar segmento
+        ctx.beginPath();
+        ctx.moveTo(puntoAnterior.x * scaleX, puntoAnterior.y * scaleY);
+        ctx.lineTo(puntoActual.x * scaleX, puntoActual.y * scaleY);
+        ctx.stroke();
+      }
+
+      // Dibujar puntos clave cada 10 frames
+      puntosHastaActual.forEach((punto, index) => {
+        if (index % 10 === 0 || index === puntosHastaActual.length - 1) {
+          const frameMetrics = frameBuffer[punto.frameIndex]?.metrics;
+          const direction = frameMetrics?.directions?.[idPersona.toString()]?.[0] || "P";
+          ctx.fillStyle = getColorForDirection(direction);
+          ctx.beginPath();
+          ctx.arc(punto.x * scaleX, punto.y * scaleY, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+
+      // Dibujar punto actual más grande
+      const ultimoPunto = puntosHastaActual[puntosHastaActual.length - 1];
+      const frameMetrics = frameBuffer[ultimoPunto.frameIndex]?.metrics;
+      const direction = frameMetrics?.directions?.[idPersona.toString()]?.[0] || "P";
+      ctx.fillStyle = getColorForDirection(direction);
+      ctx.beginPath();
+      ctx.arc(ultimoPunto.x * scaleX, ultimoPunto.y * scaleY, 5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Etiqueta con ID
+      ctx.fillStyle = "white";
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 1;
+      ctx.font = "12px Arial";
+      const texto = `ID ${idPersona}`;
+      const textX = ultimoPunto.x * scaleX + 8;
+      const textY = ultimoPunto.y * scaleY - 8;
+      ctx.strokeText(texto, textX, textY);
+      ctx.fillText(texto, textX, textY);
+    });
+  };
+  
   return (
     <div className={styles.layoutContainer}>
       {isLeftSidebarOpen && (
@@ -908,31 +952,17 @@ const downloadRecording = async () => {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {!isStopping && detections.map((det) => (
-                  <button
-                      key={det.id}
-                      onClick={() => handleZoom(det.id)}
-                      className={zoomEnabled && zoomTarget?.id === det.id ? styles.selectedButton : ""}
-                  >
-                    {zoomEnabled && zoomTarget?.id === det.id
-                        ? `Quitar Zoom (ID ${det.id})`
-                        : `Zoom al ID ${det.id}`}
-                  </button>
-              ))}
-              {zoomEnabled && (
-                  <div className={styles.zoomControls}>
-                    <label>Factor:
-                      <input
-                          type="range"
-                          min="1"
-                          max="3"
-                          step="0.1"
-                          value={zoomFactor}
-                          onChange={(e) => setZoomFactor(Number(e.target.value))}
-                      />
-                      {zoomFactor}x
-                    </label>
-                  </div>
+              {!isStopping && selectedId !== "" && (
+                <button onClick={resetId}>Quitar Zoom</button>
+              )}
+              {!isStopping && (
+                <>
+                  {detections.map((det) => (
+                    <button key={det.id} onClick={() => handleZoom(det.id)}>
+                      Zoom al ID {det.id}
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </details>
@@ -942,18 +972,18 @@ const downloadRecording = async () => {
             <div className={styles.optionsContainer}>
               {/* Unidad de procesamiento */}
               {!isTracking && !isStopping && hasGPU === true && (
-                  <div className={styles.trackingOption}>
-                    <label>Unidad de procesamiento:</label>
-                    <br/>
-                    <select
-                        value={processingUnit}
-                        onChange={(e) => setProcessingUnit(e.target.value)}
-                        disabled={isTracking || isStopping}
-                    >
-                      <option value="gpu">GPU</option>
-                      <option value="cpu">CPU</option>
-                    </select>
-                  </div>
+                <div className={styles.trackingOption}>
+                  <label>Unidad de procesamiento:</label>
+                  <br />
+                  <select
+                    value={processingUnit}
+                    onChange={(e) => setProcessingUnit(e.target.value)}
+                    disabled={isTracking || isStopping}
+                  >
+                    <option value="gpu">GPU</option>
+                    <option value="cpu">CPU</option>
+                  </select>
+                </div>
               )}
 
               {/* FPS */}
@@ -1354,6 +1384,48 @@ const downloadRecording = async () => {
                       </div>
                     )}
                   </div>
+                  {/* Controles de trayectorias */}
+                  <div className={styles.trajectoryControls}>
+                    <div className={styles.controlRow}>
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={mostrarTrayectorias}
+                          onChange={(e) => setMostrarTrayectorias(e.target.checked)}
+                        />
+                        Mostrar trayectorias
+                      </label>
+                      <button
+                        onClick={() => {
+                          setTrayectorias(new Map());
+                          setIdsSeleccionados([]);
+                        }}
+                        className={styles.clearButton}
+                        disabled={trayectorias.size === 0}
+                      >
+                        Limpiar todas las trayectorias
+                      </button>
+                    </div>
+                    {trayectorias.size > 0 && (
+                    <div className={styles.activeTrajectories}>
+                      <span>Trayectorias activas: </span>
+                      {Array.from(trayectorias.keys()).map(id => {
+                        // Obtener la dirección del frame actual para esta persona
+                        const direction = frameBuffer[currentIndex]?.metrics?.directions?.[id.toString()]?.[0] || "P";
+                        return (
+                          <span
+                            key={id}
+                            className={styles.trajectoryTag}
+                            style={{ color: getColorForDirection(direction) }}
+                          >
+                            ID {id} ({trayectorias.get(id)!.length} puntos) {/* se puede sacar*/}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  </div>
+
                 </div>
               )}
 

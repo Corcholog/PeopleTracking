@@ -52,151 +52,177 @@ export default function DashboardPage() {
   };
   //parte de usar permitir ver frames anteriores:
   // número máximo de frames a guardar
-const [maxBuffer, setMaxBuffer] = useState<number>(5000);
-type FrameWithMetrics = { 
-  blob: Blob; 
-  time: number; 
-  metrics?: any; // Las métricas asociadas a este frame
-  detections?: Array<{ id: number; bbox: number[] }>; // Detecciones asociadas
-};
-const [frameBuffer, setFrameBuffer] = useState<FrameWithMetrics[]>([]);
-const [currentIndex, setCurrentIndex] = useState<number>(-1);
-const wasLiveRef = useRef(true);
-const [isPlaying, setIsPlaying] = useState(false);
-const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
-const firstFrameTimeRef = useRef<number | null>(null);
-const [isVideoEnded, setIsVideoEnded] = useState(false);
+  const [maxBuffer, setMaxBuffer] = useState<number>(5000);
+  type FrameWithMetrics = { 
+    blob: Blob; 
+    time: number; 
+    metrics?: any; // Las métricas asociadas a este frame
+    detections?: Array<{ id: number; bbox: number[] }>; // Detecciones asociadas
+  };
+  const [frameBuffer, setFrameBuffer] = useState<FrameWithMetrics[]>([]);
+  const [currentIndex, setCurrentIndex] = useState<number>(-1);
+  const wasLiveRef = useRef(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
+  const firstFrameTimeRef = useRef<number | null>(null);
+  const [isVideoEnded, setIsVideoEnded] = useState(false);
 
-const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
+  const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
 
-const toggleSeleccionId = (id: number) => {
-  setIdsSeleccionados((prev) => {
-    const isCurrentlySelected = prev.includes(id);
-    
-    if (isCurrentlySelected) {
-      // Remover ID y su trayectoria
+  const toggleSeleccionId = (id: number) => {
+    setIdsSeleccionados(prev => {
+      const newIds = prev.includes(id)
+        ? prev.filter(i => i !== id)
+        : [...prev, id];
+      
+      // Forzar actualización inmediata
       setTrayectorias(prevTray => {
         const newTray = new Map(prevTray);
-        newTray.delete(id);
+        if (newIds.includes(id)) {
+          newTray.set(id, construirTrayectoria(id));
+        } else {
+          newTray.delete(id);
+        }
         return newTray;
       });
-      return prev.filter((i) => i !== id);
+      
+      return newIds;
+    });
+  };
+
+  const toggleSeleccionGrupo = (idGrupo: number) => {
+    setGruposSeleccionados((prev) => {
+      const isCurrentlySelected = prev.includes(idGrupo);
+      
+      if (isCurrentlySelected) {
+        // Remover grupo y su trayectoria
+        setTrayectoriasGrupos(prevTray => {
+          const newTray = new Map(prevTray);
+          newTray.delete(idGrupo);
+          return newTray;
+        });
+        return prev.filter((i) => i !== idGrupo);
+      } else {
+        // Agregar grupo y construir su trayectoria
+        const nuevaTrayectoria = construirTrayectoriaGrupo(idGrupo);
+        setTrayectoriasGrupos(prevTray => {
+          const newTray = new Map(prevTray);
+          newTray.set(idGrupo, nuevaTrayectoria);
+          return newTray;
+        });
+        return [...prev, idGrupo];
+      }
+    });
+  };
+
+  const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
+
+  // Estado para trayectorias de grupos
+  const [trayectoriasGrupos, setTrayectoriasGrupos] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
+  // Estado para grupos seleccionados
+  const [gruposSeleccionados, setGruposSeleccionados] = useState<number[]>([]);
+
+  // Estado temporal para almacenar las últimas métricas recibidas
+  const [latestMetrics, setLatestMetrics] = useState<any>(null);
+  const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
+
+  // Estados para trayectorias
+  const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
+  const [mostrarTrayectorias, setMostrarTrayectorias] = useState(true);
+
+  // 1) Define un estado para el live frame:
+  const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
+
+
+    // resolutionStreaming: límite máximo 1280x720
+    // Si el usuario elige menor (p. ej. 854x480), mantén esa
+    const resolutionStreaming = useMemo(() => {
+      const [w, h] = selectedResolution.split("x").map(Number);
+      // ancho máximo 1280, alto máximo 720
+      const sw = Math.min(w, 1280);
+      const sh = Math.min(h, 720);
+      return `${sw}x${sh}`;      // ej: "1280x720" o "854x480"
+    }, [selectedResolution]);
+
+  useEffect(() => {
+    // 1. Mapea cada resolución a un tamaño medio de blob JPEG (en KB)
+    const [rw, rh] = resolutionStreaming.split("x").map(Number);
+    let avgBlobKB: number;
+    if (rw >= 3840 || rh >= 2160) {
+      avgBlobKB = 300;   // 4K, cuesta más
+    } else if (rw >= 2560 || rh >= 1440) {
+      avgBlobKB = 250;   // 2K
+    } else if (rw >= 1920 || rh >= 1080) {
+      avgBlobKB = 200;   // 1080p
+    } else if (rw >= 1280 || rh >= 720) {
+      avgBlobKB = 100;   // 720p
+    } else if (rw >= 854 || rh >= 480) {
+      avgBlobKB = 50;    // 480p
+    } else if (rw >= 640 || rh >= 360) {
+      avgBlobKB = 30;    // 360p
     } else {
-      // Agregar ID y construir su trayectoria
-      const nuevaTrayectoria = construirTrayectoria(id);
-      setTrayectorias(prevTray => {
-        const newTray = new Map(prevTray);
-        newTray.set(id, nuevaTrayectoria);
-        return newTray;
-      });
-      return [...prev, id];
+      avgBlobKB = 20;    // resoluciones menores
     }
-  });
-};
 
-const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
+    // 2. RAM aproximada reportada por el navegador (GB)
+    const reportedGB = (navigator as any).deviceMemory || 4;
+    // % de esa RAM que queremos dedicar al buffer
+    const fraction = 0.5;  // 50%
+    const budgetMB = reportedGB * 1024 * fraction;    // MB disponibles
+    const budgetKB = budgetMB * 1024;                 // KB disponibles
+    const theoreticalFrames = Math.floor(budgetKB / avgBlobKB);
 
-// Estado temporal para almacenar las últimas métricas recibidas
-const [latestMetrics, setLatestMetrics] = useState<any>(null);
-const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
+    // 3. Si la API performance.memory existe, comprobamos el heap libre
+    let safeFrames = theoreticalFrames;
+    const perf = (performance as any).memory;
+    if (perf && perf.usedJSHeapSize && perf.jsHeapSizeLimit) {
+      const usedMB  = perf.usedJSHeapSize  / 1024 / 1024;
+      const limitMB = perf.jsHeapSizeLimit / 1024 / 1024;
+      const freeMB  = Math.max(0, limitMB - usedMB);
+      // Dedicamos aquí un % adicional, p.ej. 60% del heap libre
+      const heapFraction = 0.5;
+      const heapBudgetKB = freeMB * 1024 * heapFraction;
+      const heapFrames   = Math.floor(heapBudgetKB / avgBlobKB);
+      // No queremos pasarnos del heap libre
+      safeFrames = Math.min(theoreticalFrames, heapFrames);
+    }
 
-// Estados para trayectorias
-const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
-const [mostrarTrayectorias, setMostrarTrayectorias] = useState(true);
+    // 4. Establecemos maxBuffer
+    setMaxBuffer(safeFrames);
 
-// 1) Define un estado para el live frame:
-const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
+    console.log(
+      `▶️ resolutionStreaming=${resolutionStreaming}, avgBlob≈${avgBlobKB}KB/frame\n` +
+      `   reportedRAM≈${reportedGB}GB → budget=${budgetMB.toFixed(1)}MB → ` +
+      `frames(teórico)=${theoreticalFrames}` +
+      (perf && perf.usedJSHeapSize
+        ? `, heapLibre=${((perf.jsHeapSizeLimit - perf.usedJSHeapSize)/1024/1024).toFixed(1)}MB → safeFrames=${safeFrames}`
+        : "")
+    );
+  }, [resolutionStreaming]);
 
+  const registerFrameTime = (time: number) => {
+    if (firstFrameTimeRef.current === null) {
+      firstFrameTimeRef.current = time;
+    }
+  };
 
-  // resolutionStreaming: límite máximo 1280x720
-  // Si el usuario elige menor (p. ej. 854x480), mantén esa
-  const resolutionStreaming = useMemo(() => {
-    const [w, h] = selectedResolution.split("x").map(Number);
-    // ancho máximo 1280, alto máximo 720
-    const sw = Math.min(w, 1280);
-    const sh = Math.min(h, 720);
-    return `${sw}x${sh}`;      // ej: "1280x720" o "854x480"
-  }, [selectedResolution]);
-
-useEffect(() => {
-  // 1. Mapea cada resolución a un tamaño medio de blob JPEG (en KB)
-  const [rw, rh] = resolutionStreaming.split("x").map(Number);
-  let avgBlobKB: number;
-  if (rw >= 3840 || rh >= 2160) {
-    avgBlobKB = 300;   // 4K, cuesta más
-  } else if (rw >= 2560 || rh >= 1440) {
-    avgBlobKB = 250;   // 2K
-  } else if (rw >= 1920 || rh >= 1080) {
-    avgBlobKB = 200;   // 1080p
-  } else if (rw >= 1280 || rh >= 720) {
-    avgBlobKB = 100;   // 720p
-  } else if (rw >= 854 || rh >= 480) {
-    avgBlobKB = 50;    // 480p
-  } else if (rw >= 640 || rh >= 360) {
-    avgBlobKB = 30;    // 360p
-  } else {
-    avgBlobKB = 20;    // resoluciones menores
-  }
-
-  // 2. RAM aproximada reportada por el navegador (GB)
-  const reportedGB = (navigator as any).deviceMemory || 4;
-  // % de esa RAM que queremos dedicar al buffer
-  const fraction = 0.5;  // 50%
-  const budgetMB = reportedGB * 1024 * fraction;    // MB disponibles
-  const budgetKB = budgetMB * 1024;                 // KB disponibles
-  const theoreticalFrames = Math.floor(budgetKB / avgBlobKB);
-
-  // 3. Si la API performance.memory existe, comprobamos el heap libre
-  let safeFrames = theoreticalFrames;
-  const perf = (performance as any).memory;
-  if (perf && perf.usedJSHeapSize && perf.jsHeapSizeLimit) {
-    const usedMB  = perf.usedJSHeapSize  / 1024 / 1024;
-    const limitMB = perf.jsHeapSizeLimit / 1024 / 1024;
-    const freeMB  = Math.max(0, limitMB - usedMB);
-    // Dedicamos aquí un % adicional, p.ej. 60% del heap libre
-    const heapFraction = 0.5;
-    const heapBudgetKB = freeMB * 1024 * heapFraction;
-    const heapFrames   = Math.floor(heapBudgetKB / avgBlobKB);
-    // No queremos pasarnos del heap libre
-    safeFrames = Math.min(theoreticalFrames, heapFrames);
-  }
-
-  // 4. Establecemos maxBuffer
-  setMaxBuffer(safeFrames);
-
-  console.log(
-    `▶️ resolutionStreaming=${resolutionStreaming}, avgBlob≈${avgBlobKB}KB/frame\n` +
-    `   reportedRAM≈${reportedGB}GB → budget=${budgetMB.toFixed(1)}MB → ` +
-    `frames(teórico)=${theoreticalFrames}` +
-    (perf && perf.usedJSHeapSize
-      ? `, heapLibre=${((perf.jsHeapSizeLimit - perf.usedJSHeapSize)/1024/1024).toFixed(1)}MB → safeFrames=${safeFrames}`
-      : "")
-  );
-}, [resolutionStreaming]);
-
-const registerFrameTime = (time: number) => {
-  if (firstFrameTimeRef.current === null) {
-    firstFrameTimeRef.current = time;
-  }
-};
-
-const resetFirstFrameTime = () => {
-  if (frameBuffer.length > 0) {
-    firstFrameTimeRef.current = frameBuffer[0].time;
-  } else {
+  const resetFirstFrameTime = () => {
+    if (frameBuffer.length > 0) {
+      firstFrameTimeRef.current = frameBuffer[0].time;
+    } else {
+      firstFrameTimeRef.current = null;
+    }
+  };
+  const resetPlaybackState = () => {
+    setFrameBuffer([]);
+    setCurrentIndex(-1);
     firstFrameTimeRef.current = null;
-  }
-};
-const resetPlaybackState = () => {
-  setFrameBuffer([]);
-  setCurrentIndex(-1);
-  firstFrameTimeRef.current = null;
-  wasLiveRef.current = true;
-  setHistorialMetricasGenerales([]);
-  setIdsSeleccionados([]);
-  setGrupoSeleccionado(null);
-  setTrayectorias(new Map());
-};
+    wasLiveRef.current = true;
+    setHistorialMetricasGenerales([]);
+    setIdsSeleccionados([]);
+    setGrupoSeleccionado(null);
+    setTrayectorias(new Map());
+  };
 
   useEffect(() => {
     const checkBackendReady = async () => {
@@ -329,7 +355,11 @@ useEffect(() => {
   if (wasLiveRef.current) return;
   // toma el frame actual del buffer, que ahora es { blob, time }
   const frame = frameBuffer[currentIndex];
+  if (!annotatedCanvasRef.current) return;
+  
   const canvas = annotatedCanvasRef.current;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
   if (!frame || !canvas) return;
 
   if (frame.metrics) {
@@ -338,8 +368,6 @@ useEffect(() => {
   if (frame.detections) {
     setDetections(frame.detections);
   }
-
-  const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
   let didCancel = false;
@@ -372,7 +400,7 @@ useEffect(() => {
   return () => {
     didCancel = true;
   };
-}, [currentIndex, frameBuffer]);
+}, [currentIndex, frameBuffer, trayectorias, trayectoriasGrupos]);
 
 // Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte:
 useEffect(() => {
@@ -816,13 +844,13 @@ const downloadRecording = async () => {
   };
 
   // Función para construir trayectoria de un ID específico
-  const construirTrayectoria = (idPersona: number): Array<{x: number, y: number, frameIndex: number}> => {
-    const puntos: Array<{x: number, y: number, frameIndex: number}> = [];
-    
-    frameBuffer.forEach((frame, frameIndex) => {
+  const construirTrayectoria = (idPersona: number) => {
+    return frameBuffer.reduce((puntos, frame, frameIndex) => {
       if (frame.metrics?.tracking_data) {
-        const personData = frame.metrics.tracking_data.find((p: any) => p.id_persona === idPersona);
-        if (personData && personData.centro) {
+        const personData = frame.metrics.tracking_data.find(
+          (p: any) => p.id_persona === idPersona
+        );
+        if (personData?.centro) {
           puntos.push({
             x: personData.centro[0],
             y: personData.centro[1],
@@ -830,14 +858,13 @@ const downloadRecording = async () => {
           });
         }
       }
-    });
-    
-    return puntos;
+      return puntos;
+    }, [] as Array<{x: number, y: number, frameIndex: number}>);
   };
 
   // Función para renderizar trayectorias en el canvas
   const dibujarTrayectorias = (canvas: HTMLCanvasElement) => {
-    if (!mostrarTrayectorias || trayectorias.size === 0) return;
+    if (!mostrarTrayectorias || (trayectorias.size === 0 && trayectoriasGrupos.size === 0)) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -853,6 +880,7 @@ const downloadRecording = async () => {
     const scaleX = canvasWidth / originalWidth;
     const scaleY = canvasHeight / originalHeight;
 
+    // Dibujar trayectorias de personas
     trayectorias.forEach((puntos, idPersona) => {
       if (puntos.length < 2) return;
 
@@ -912,6 +940,162 @@ const downloadRecording = async () => {
       ctx.strokeText(texto, textX, textY);
       ctx.fillText(texto, textX, textY);
     });
+
+    // Dibujar trayectorias y cajas de grupos
+    trayectoriasGrupos.forEach((puntos, idGrupo) => {
+      if (puntos.length < 2) return;
+
+      // Filtrar puntos hasta el frame actual
+      const puntosHastaActual = puntos.filter(p => p.frameIndex <= currentIndex);
+      if (puntosHastaActual.length < 2) return;
+
+      // Dibujar trayectoria del grupo
+      ctx.lineWidth = 3; // Línea más gruesa para grupos
+      ctx.setLineDash([5, 5]); // Línea discontinua para diferenciar
+
+      for (let i = 1; i < puntosHastaActual.length; i++) {
+        const puntoActual = puntosHastaActual[i];
+        const puntoAnterior = puntosHastaActual[i - 1];
+
+        // Obtener la dirección del grupo para el frame actual
+        const direction = getGrupoDirection(idGrupo, puntoActual.frameIndex);
+        ctx.strokeStyle = getColorForDirection(direction);
+
+        // Dibujar segmento
+        ctx.beginPath();
+        ctx.moveTo(puntoAnterior.x * scaleX, puntoAnterior.y * scaleY);
+        ctx.lineTo(puntoActual.x * scaleX, puntoActual.y * scaleY);
+        ctx.stroke();
+      }
+
+      // Dibujar puntos clave cada 10 frames
+      puntosHastaActual.forEach((punto, index) => {
+        if (index % 10 === 0 || index === puntosHastaActual.length - 1) {
+          const direction = getGrupoDirection(idGrupo, punto.frameIndex);
+          ctx.fillStyle = getColorForDirection(direction);
+          ctx.beginPath();
+          ctx.arc(punto.x * scaleX, punto.y * scaleY, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+
+      // Dibujar punto actual más grande
+      const ultimoPunto = puntosHastaActual[puntosHastaActual.length - 1];
+      const direction = getGrupoDirection(idGrupo, ultimoPunto.frameIndex);
+      ctx.fillStyle = getColorForDirection(direction);
+      ctx.beginPath();
+      ctx.arc(ultimoPunto.x * scaleX, ultimoPunto.y * scaleY, 6, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Etiqueta con ID del grupo
+      ctx.fillStyle = "white";
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 1;
+      ctx.font = "14px Arial"; // Fuente un poco más grande para grupos
+      const texto = `Grupo ${idGrupo}`;
+      const textX = ultimoPunto.x * scaleX + 10;
+      const textY = ultimoPunto.y * scaleY - 10;
+      ctx.strokeText(texto, textX, textY);
+      ctx.fillText(texto, textX, textY);
+
+      // Dibujar caja del grupo en el frame actual
+      const frameMetrics = frameBuffer[currentIndex]?.metrics;
+      if (frameMetrics?.groups) {
+        const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+        if (grupo && grupo.grupo_ids.length > 0) {
+          const personas = frameMetrics.tracking_data.filter((p: any) =>
+            grupo.grupo_ids.includes(p.id_persona)
+          );
+          if (personas.length > 0) {
+            // Calcular los límites de la caja
+            const x1 = Math.min(...personas.map((p: any) => p.bbox[0]));
+            const y1 = Math.min(...personas.map((p: any) => p.bbox[1]));
+            const x2 = Math.max(...personas.map((p: any) => p.bbox[2]));
+            const y2 = Math.max(...personas.map((p: any) => p.bbox[3]));
+
+            // Dibujar la caja
+            ctx.strokeStyle = "#0066ff";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]); // Línea continua
+            ctx.beginPath();
+            ctx.rect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+            ctx.stroke();
+          }
+        }
+      }
+    });
+  };
+
+  // Nuevo efecto para actualizar trayectorias en tiempo real
+  useEffect(() => {
+    if (!wasLiveRef.current || !isTracking) return;
+    
+    // Actualizar trayectorias para IDs seleccionados
+    setTrayectorias(prev => {
+      const newMap = new Map(prev);
+      idsSeleccionados.forEach(id => {
+        const puntos = construirTrayectoria(id);
+        newMap.set(id, puntos);
+      });
+      return newMap;
+    });
+
+    // Actualizar trayectorias para grupos seleccionados
+    setTrayectoriasGrupos(prev => {
+      const newMap = new Map(prev);
+      gruposSeleccionados.forEach(idGrupo => {
+        const puntos = construirTrayectoriaGrupo(idGrupo);
+        newMap.set(idGrupo, puntos);
+      });
+      return newMap;
+    });
+  }, [frameBuffer, isTracking]); // Se activa con cada nuevo frame
+
+  const getGrupoDirection = (idGrupo: number, frameIndex: number): string => {
+    const frameMetrics = frameBuffer[frameIndex]?.metrics;
+    if (!frameMetrics?.groups || !frameMetrics?.directions) return "P";
+
+    const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+    if (!grupo || grupo.grupo_ids.length === 0) return "P";
+
+    // Obtener direcciones de los miembros
+    const direcciones = grupo.grupo_ids
+      .map((id: number) => frameMetrics.directions[id.toString()]?.[0])
+      .filter(Boolean);
+
+    if (direcciones.length === 0) return "P";
+
+    // Calcular moda (dirección más común)
+    const conteo: { [key: string]: number } = {};
+    direcciones.forEach((dir: string) => {
+      conteo[dir] = (conteo[dir] || 0) + 1;
+    });
+
+    return Object.keys(conteo).reduce((a, b) => 
+      conteo[a] > conteo[b] ? a : b, "P");
+  };
+
+  const construirTrayectoriaGrupo = (idGrupo: number): Array<{x: number, y: number, frameIndex: number}> => {
+    return frameBuffer.reduce((puntos, frame, frameIndex) => {
+      if (frame.metrics?.groups) {
+        const grupo = frame.metrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+        if (grupo && grupo.grupo_ids.length > 0) {
+          const personas = frame.metrics.tracking_data.filter((p: any) =>
+            grupo.grupo_ids.includes(p.id_persona)
+          );
+          if (personas.length > 0) {
+            // Calcular centroide (promedio de centros)
+            const centroX = personas.reduce((sum: number, p: any) => 
+              sum + p.centro[0], 0) / personas.length;
+            const centroY = personas.reduce((sum: number, p: any) => 
+              sum + p.centro[1], 0) / personas.length;
+            
+            puntos.push({ x: centroX, y: centroY, frameIndex });
+          }
+        }
+      }
+      return puntos;
+    }, [] as Array<{x: number, y: number, frameIndex: number}>);
   };
   
   return (
@@ -1439,13 +1623,27 @@ const downloadRecording = async () => {
                           <div 
                             key={`grupo-${index}`}
                             className={`${styles.metricCard} ${grupoSeleccionado === index ? styles.selectedCard : ""}`}
-                            onClick={() => setGrupoSeleccionado(index)}
+                            onClick={() => {
+                              setGrupoSeleccionado(grupoSeleccionado === index ? null : index);
+                              toggleSeleccionGrupo(grupo.id_grupo[0]);
+                            }}
                           >
                             <div className={styles.cardHeader}>
                               <h4>Grupo {grupo.id_grupo[0]}</h4>
                               <span className={styles.cardStatus}>
-                                {grupoSeleccionado === index ? "Seleccionado" : "Click para seleccionar"}
+                                {gruposSeleccionados.includes(grupo.id_grupo[0]) 
+                                  ? "Trayectoria activa" 
+                                  : "Click para activar trayectoria"}
                               </span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleSeleccionGrupo(grupo.id_grupo[0]);
+                                }}
+                                className={styles.toggleButton}
+                              >
+                                {gruposSeleccionados.includes(grupo.id_grupo[0]) ? "Ocultar Trayectoria" : "Mostrar Trayectoria"}
+                              </button>
                             </div>
                             <div className={styles.cardContent}>
                               <div className={styles.metricRow}>
@@ -1458,17 +1656,12 @@ const downloadRecording = async () => {
                                   {grupo.grupo_ids.join(", ")}
                                 </span>
                               </div>
-                              
-                              {/* Detalles expandidos cuando el grupo está seleccionado */}
                               {grupoSeleccionado === index && (
                                 <div className={styles.expandedGroupDetails}>
                                   {grupo.grupo_ids.map((personId: number) => {
-                                    // Buscar los datos de tracking de esta persona (opcional)
                                     const personData = frameBuffer[currentIndex]?.metrics?.tracking_data?.find(
                                       (p: any) => p.id_persona === personId
                                     );
-                                    
-                                    // Obtener la dirección de esta persona (opcional)
                                     const getDirectionSymbol = (directionCode: string) => {
                                       const directionMap: { [key: string]: string } = {
                                         "P": "⏸️", // Stopped
@@ -1483,10 +1676,8 @@ const downloadRecording = async () => {
                                       };
                                       return directionMap[directionCode] || "❓";
                                     };
-                                    
                                     const personDirection = frameBuffer[currentIndex]?.metrics?.directions?.[personId.toString()];
                                     const directionSymbol = personDirection ? getDirectionSymbol(personDirection[0]) : "❓";
-                                    
                                     return (
                                       <div key={personId} className={styles.memberDetail}>
                                         <div className={styles.memberInfo}>
@@ -1512,6 +1703,47 @@ const downloadRecording = async () => {
                     ) : (
                       <div className={styles.noDataMessage}>
                         <p>No hay grupos disponibles</p>
+                      </div>
+                    )}
+                  </div>
+                  {/* Controles de trayectorias de grupos */}
+                  <div className={styles.trajectoryControls}>
+                    <div className={styles.controlRow}>
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={mostrarTrayectorias}
+                          onChange={(e) => setMostrarTrayectorias(e.target.checked)}
+                        />
+                        Mostrar trayectorias
+                      </label>
+                      <button
+                        onClick={() => {
+                          setTrayectoriasGrupos(new Map());
+                          setGruposSeleccionados([]);
+                        }}
+                        className={styles.clearButton}
+                        disabled={trayectoriasGrupos.size === 0}
+                      >
+                        Limpiar trayectorias de grupos
+                      </button>
+                    </div>
+                    {trayectoriasGrupos.size > 0 && (
+                      <div className={styles.activeTrajectories}>
+                        <span>Trayectorias de grupos activas: </span>
+                        {Array.from(trayectoriasGrupos.keys()).map(id => {
+                          // Obtener la dirección del grupo en el frame actual
+                          const direction = getGrupoDirection(id, currentIndex);
+                          return (
+                            <span
+                              key={id}
+                              className={styles.trajectoryTag}
+                              style={{ color: getColorForDirection(direction) }}
+                            >
+                              Grupo {id} ({trayectoriasGrupos.get(id)!.length} puntos)
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

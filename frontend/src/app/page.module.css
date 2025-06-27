@@ -897,3 +897,27 @@
   border-radius: 3px;
   font-weight: bold;
 }
+
+.toggleButton {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.toggleButton:hover {
+  background-color: #0056b3;
+}
+
+.toggleButton:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+}
+
+.checkboxLabel input {
+  margin-right: 8px;
+}

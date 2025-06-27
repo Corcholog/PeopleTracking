@@ -258,6 +258,30 @@ def get_nearest_distance(
 
 grupos_detectados = []
 
+# Historial de grupos detectados
+grupos_historicos = {}  # {grupo_id: set(person_ids)}
+siguiente_grupo_id = 1
+grupos_activos_frame_anterior = set()
+
+def encontrar_grupo_existente(nuevo_grupo_ids, grupos_historicos):
+    """
+    Busca si ya existe un grupo con al menos el 50% de coincidencia
+    """
+    nuevo_set = set(nuevo_grupo_ids)
+    mejor_coincidencia = None
+    mejor_score = 0
+    
+    for grupo_id, grupo_existente in grupos_historicos.items():
+        interseccion = nuevo_set.intersection(grupo_existente)
+        if len(interseccion) > 0:
+            # Porcentaje de coincidencia basado en el grupo más pequeño
+            score = len(interseccion) / min(len(nuevo_set), len(grupo_existente))
+            if score > mejor_score and score >= 0.5:  # Al menos 50% de coincidencia
+                mejor_score = score
+                mejor_coincidencia = grupo_id
+    
+    return mejor_coincidencia
+
 def have_same_direction(id1, id2, previous_directions, angle_threshold=20):
     """
     Devuelve True si las dos personas tienen direcciones similares
@@ -274,15 +298,18 @@ def have_same_direction(id1, id2, previous_directions, angle_threshold=20):
     return angle < angle_threshold
 
 def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
+    global grupos_historicos, siguiente_grupo_id, grupos_activos_frame_anterior
+    
     grupos_detectados_frame = []
     visitados = set()
-    grupo_id = 1
+    grupos_activos_frame_actual = set()
 
     personas = tracking_data_last_frame
 
     for i, p1 in enumerate(personas):
         if p1['id_persona'] in visitados:
             continue
+        
         grupo = [p1['id_persona']]
         visitados.add(p1['id_persona'])
 
@@ -295,13 +322,41 @@ def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
                 grupo.append(p2['id_persona'])
                 visitados.add(p2['id_persona'])
 
+        # Solo procesar si es realmente un grupo (más de 1 persona)
         if len(grupo) > 1:
+            # Buscar si ya existe un grupo con estos IDs
+            grupo_id_existente = encontrar_grupo_existente(grupo, grupos_historicos)
+            
+            if grupo_id_existente:
+                # Actualizar el grupo existente
+                grupos_historicos[grupo_id_existente] = set(grupo)
+                grupo_id_final = grupo_id_existente
+            else:
+                # Crear nuevo grupo
+                grupo_id_final = siguiente_grupo_id
+                grupos_historicos[siguiente_grupo_id] = set(grupo)
+                siguiente_grupo_id += 1
+            
+            grupos_activos_frame_actual.add(grupo_id_final)
+            
             grupos_detectados_frame.append({
-                'id_grupo': [grupo_id],
+                'id_grupo': [grupo_id_final],  # ✅ Mantener como lista
                 'grupo_ids': grupo
             })
-            grupo_id += 1
 
+    # Limpiar grupos que no han sido detectados en varios frames
+    # (opcional: puedes ajustar esta lógica según tus necesidades)
+    grupos_a_eliminar = []
+    for grupo_id in grupos_historicos:
+        if grupo_id not in grupos_activos_frame_actual and grupo_id not in grupos_activos_frame_anterior:
+            # Si un grupo no aparece en 2 frames consecutivos, lo eliminamos del historial
+            grupos_a_eliminar.append(grupo_id)
+    
+    for grupo_id in grupos_a_eliminar:
+        del grupos_historicos[grupo_id]
+    
+    grupos_activos_frame_anterior = grupos_activos_frame_actual.copy()
+    
     return grupos_detectados_frame
 
             
@@ -427,6 +482,7 @@ async def analyze(ws: WebSocket):
                 print(f"🟢 Grupos detectados en frame {frame_number}:")
                 for grupo in grupos_actuales:
                     print(f"   Grupo {grupo['id_grupo']}: {grupo['grupo_ids']}")
+                print(f"📊 Historial de grupos: {dict(grupos_historicos)}")
             else:
                 print(f"🔹 Sin grupos detectados en frame {frame_number}")
 
@@ -497,6 +553,7 @@ async def reset_model(request: Request):
     global current_id
     current_id = None
     reset()
+    reset_groups()
     return {"status": "model reset"}
 
 @app.post("/set_id/")
@@ -509,6 +566,7 @@ async def set_id(payload: IDPayload):
 async def clear_id():
     global current_id
     current_id = None
+    reset_groups()
     return {"status": "id cleared"}
 
 @app.post("/config/")
@@ -671,4 +729,12 @@ async def clear_url():
     global stream_url, url
     stream_url = False
     url = False
+    reset_groups()
     return {"status": "ok"}
+
+def reset_groups():
+    global grupos_historicos, siguiente_grupo_id, grupos_activos_frame_anterior
+    grupos_historicos = {}
+    siguiente_grupo_id = 1
+    grupos_activos_frame_anterior = set()
+    return {"status": "groups reset"}

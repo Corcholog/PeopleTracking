@@ -70,9 +70,28 @@ const [isVideoEnded, setIsVideoEnded] = useState(false);
 const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
 
 const toggleSeleccionId = (id: number) => {
-  setIdsSeleccionados((prev) =>
-    prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-  );
+  setIdsSeleccionados((prev) => {
+    const isCurrentlySelected = prev.includes(id);
+    
+    if (isCurrentlySelected) {
+      // Remover ID y su trayectoria
+      setTrayectorias(prevTray => {
+        const newTray = new Map(prevTray);
+        newTray.delete(id);
+        return newTray;
+      });
+      return prev.filter((i) => i !== id);
+    } else {
+      // Agregar ID y construir su trayectoria
+      const nuevaTrayectoria = construirTrayectoria(id);
+      setTrayectorias(prevTray => {
+        const newTray = new Map(prevTray);
+        newTray.set(id, nuevaTrayectoria);
+        return newTray;
+      });
+      return [...prev, id];
+    }
+  });
 };
 
 const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
@@ -80,6 +99,10 @@ const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
 // Estado temporal para almacenar las últimas métricas recibidas
 const [latestMetrics, setLatestMetrics] = useState<any>(null);
 const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
+
+// Estados para trayectorias
+const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
+const [mostrarTrayectorias, setMostrarTrayectorias] = useState(true);
 
 // 1) Define un estado para el live frame:
 const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
@@ -172,6 +195,7 @@ const resetPlaybackState = () => {
   setHistorialMetricasGenerales([]);
   setIdsSeleccionados([]);
   setGrupoSeleccionado(null);
+  setTrayectorias(new Map());
 };
 
   useEffect(() => {
@@ -332,6 +356,9 @@ useEffect(() => {
       canvas.height = bitmap.height;
       // dibuja
       ctx.drawImage(bitmap, 0, 0);
+
+      dibujarTrayectorias(canvas);
+
       // limpia recursos si es posible
       bitmap.close?.();
     })
@@ -360,6 +387,8 @@ useEffect(() => {
   canvas.height = h;
 
   ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
+
+  dibujarTrayectorias(canvas);
 }, [liveFrame, resolutionStreaming, wasLiveRef.current]);
 
 useEffect(() => {
@@ -765,6 +794,124 @@ const downloadRecording = async () => {
     ? ((frameBuffer[currentIndex].time - firstFrameTimeRef.current) / 1000).toFixed(1)
     : "0.0";
 
+
+  // Mapa de colores por dirección (evitando verde)
+  const directionColorMap: { [key: string]: string } = {
+    P: "hsl(0, 70%, 50%)",   // Stopped: Rojo
+    D: "hsl(60, 70%, 50%)",  // East: Amarillo
+    Q: "hsl(45, 70%, 50%)",  // Northeast: Amarillo-naranja
+    W: "hsl(90, 70%, 50%)",  // North: Verde claro (ligeramente diferente al verde de tracking)
+    E: "hsl(135, 70%, 50%)", // Northwest: Cian-verde
+    A: "hsl(180, 70%, 50%)", // West: Cian
+    Z: "hsl(225, 70%, 50%)", // Southwest: Azul
+    S: "hsl(270, 70%, 50%)", // South: Púrpura
+    C: "hsl(315, 70%, 50%)", // Southeast: Magenta
+  };
+
+  // Función para obtener color según la dirección
+  const getColorForDirection = (direction: string): string => {
+    return directionColorMap[direction] || "hsl(0, 0%, 50%)"; // Gris por defecto si no hay dirección
+  };
+
+  // Función para construir trayectoria de un ID específico
+  const construirTrayectoria = (idPersona: number): Array<{x: number, y: number, frameIndex: number}> => {
+    const puntos: Array<{x: number, y: number, frameIndex: number}> = [];
+    
+    frameBuffer.forEach((frame, frameIndex) => {
+      if (frame.metrics?.tracking_data) {
+        const personData = frame.metrics.tracking_data.find((p: any) => p.id_persona === idPersona);
+        if (personData && personData.centro) {
+          puntos.push({
+            x: personData.centro[0],
+            y: personData.centro[1],
+            frameIndex
+          });
+        }
+      }
+    });
+    
+    return puntos;
+  };
+
+  // Función para renderizar trayectorias en el canvas
+  const dibujarTrayectorias = (canvas: HTMLCanvasElement) => {
+    if (!mostrarTrayectorias || trayectorias.size === 0) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Obtener dimensiones del canvas
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+
+    // Obtener dimensiones originales de la resolución seleccionada
+    const [originalWidth, originalHeight] = selectedResolution.split("x").map(Number);
+
+    // Calcular factores de escala
+    const scaleX = canvasWidth / originalWidth;
+    const scaleY = canvasHeight / originalHeight;
+
+    trayectorias.forEach((puntos, idPersona) => {
+      if (puntos.length < 2) return;
+
+      // Filtrar puntos hasta el frame actual
+      const puntosHastaActual = puntos.filter(p => p.frameIndex <= currentIndex);
+      if (puntosHastaActual.length < 2) return;
+
+      // Dibujar segmentos de trayectoria
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+
+      for (let i = 1; i < puntosHastaActual.length; i++) {
+        const puntoActual = puntosHastaActual[i];
+        const puntoAnterior = puntosHastaActual[i - 1];
+
+        // Obtener la dirección del frame actual
+        const frameMetrics = frameBuffer[puntoActual.frameIndex]?.metrics;
+        const direction = frameMetrics?.directions?.[idPersona.toString()]?.[0] || "P";
+        ctx.strokeStyle = getColorForDirection(direction);
+
+        // Dibujar segmento
+        ctx.beginPath();
+        ctx.moveTo(puntoAnterior.x * scaleX, puntoAnterior.y * scaleY);
+        ctx.lineTo(puntoActual.x * scaleX, puntoActual.y * scaleY);
+        ctx.stroke();
+      }
+
+      // Dibujar puntos clave cada 10 frames
+      puntosHastaActual.forEach((punto, index) => {
+        if (index % 10 === 0 || index === puntosHastaActual.length - 1) {
+          const frameMetrics = frameBuffer[punto.frameIndex]?.metrics;
+          const direction = frameMetrics?.directions?.[idPersona.toString()]?.[0] || "P";
+          ctx.fillStyle = getColorForDirection(direction);
+          ctx.beginPath();
+          ctx.arc(punto.x * scaleX, punto.y * scaleY, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+
+      // Dibujar punto actual más grande
+      const ultimoPunto = puntosHastaActual[puntosHastaActual.length - 1];
+      const frameMetrics = frameBuffer[ultimoPunto.frameIndex]?.metrics;
+      const direction = frameMetrics?.directions?.[idPersona.toString()]?.[0] || "P";
+      ctx.fillStyle = getColorForDirection(direction);
+      ctx.beginPath();
+      ctx.arc(ultimoPunto.x * scaleX, ultimoPunto.y * scaleY, 5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Etiqueta con ID
+      ctx.fillStyle = "white";
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 1;
+      ctx.font = "12px Arial";
+      const texto = `ID ${idPersona}`;
+      const textX = ultimoPunto.x * scaleX + 8;
+      const textY = ultimoPunto.y * scaleY - 8;
+      ctx.strokeText(texto, textX, textY);
+      ctx.fillText(texto, textX, textY);
+    });
+  };
+  
   return (
     <div className={styles.layoutContainer}>
       {isLeftSidebarOpen && (
@@ -1235,6 +1382,48 @@ const downloadRecording = async () => {
                       </div>
                     )}
                   </div>
+                  {/* Controles de trayectorias */}
+                  <div className={styles.trajectoryControls}>
+                    <div className={styles.controlRow}>
+                      <label className={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={mostrarTrayectorias}
+                          onChange={(e) => setMostrarTrayectorias(e.target.checked)}
+                        />
+                        Mostrar trayectorias
+                      </label>
+                      <button
+                        onClick={() => {
+                          setTrayectorias(new Map());
+                          setIdsSeleccionados([]);
+                        }}
+                        className={styles.clearButton}
+                        disabled={trayectorias.size === 0}
+                      >
+                        Limpiar todas las trayectorias
+                      </button>
+                    </div>
+                    {trayectorias.size > 0 && (
+                    <div className={styles.activeTrajectories}>
+                      <span>Trayectorias activas: </span>
+                      {Array.from(trayectorias.keys()).map(id => {
+                        // Obtener la dirección del frame actual para esta persona
+                        const direction = frameBuffer[currentIndex]?.metrics?.directions?.[id.toString()]?.[0] || "P";
+                        return (
+                          <span
+                            key={id}
+                            className={styles.trajectoryTag}
+                            style={{ color: getColorForDirection(direction) }}
+                          >
+                            ID {id} ({trayectorias.get(id)!.length} puntos) {/* se puede sacar*/}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  </div>
+
                 </div>
               )}
 

@@ -841,3 +841,59 @@
 .memberDirection:hover {
   background-color: #fff2a8;
 }
+
+.trajectoryControls {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.controlRow {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 10px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: white;
+  font-size: 14px;
+}
+
+.clearButton {
+  padding: 5px 10px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.clearButton:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.clearButton:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.activeTrajectories {
+  font-size: 12px;
+  color: #ccc;
+}
+
+.trajectoryTag {
+  display: inline-block;
+  margin: 0 5px;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  font-weight: bold;
+}

@@ -70,27 +70,23 @@ export default function DashboardPage() {
   const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
 
   const toggleSeleccionId = (id: number) => {
-    setIdsSeleccionados((prev) => {
-      const isCurrentlySelected = prev.includes(id);
+    setIdsSeleccionados(prev => {
+      const newIds = prev.includes(id)
+        ? prev.filter(i => i !== id)
+        : [...prev, id];
       
-      if (isCurrentlySelected) {
-        // Remover ID y su trayectoria
-        setTrayectorias(prevTray => {
-          const newTray = new Map(prevTray);
+      // Forzar actualización inmediata
+      setTrayectorias(prevTray => {
+        const newTray = new Map(prevTray);
+        if (newIds.includes(id)) {
+          newTray.set(id, construirTrayectoria(id));
+        } else {
           newTray.delete(id);
-          return newTray;
-        });
-        return prev.filter((i) => i !== id);
-      } else {
-        // Agregar ID y construir su trayectoria
-        const nuevaTrayectoria = construirTrayectoria(id);
-        setTrayectorias(prevTray => {
-          const newTray = new Map(prevTray);
-          newTray.set(id, nuevaTrayectoria);
-          return newTray;
-        });
-        return [...prev, id];
-      }
+        }
+        return newTray;
+      });
+      
+      return newIds;
     });
   };
 
@@ -357,7 +353,11 @@ useEffect(() => {
   if (wasLiveRef.current) return;
   // toma el frame actual del buffer, que ahora es { blob, time }
   const frame = frameBuffer[currentIndex];
+  if (!annotatedCanvasRef.current) return;
+  
   const canvas = annotatedCanvasRef.current;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
   if (!frame || !canvas) return;
 
   if (frame.metrics) {
@@ -366,8 +366,6 @@ useEffect(() => {
   if (frame.detections) {
     setDetections(frame.detections);
   }
-
-  const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
   let didCancel = false;
@@ -400,7 +398,7 @@ useEffect(() => {
   return () => {
     didCancel = true;
   };
-}, [currentIndex, frameBuffer]);
+}, [currentIndex, frameBuffer, trayectorias, trayectoriasGrupos]);
 
 // Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte:
 useEffect(() => {
@@ -844,13 +842,13 @@ const downloadRecording = async () => {
   };
 
   // Función para construir trayectoria de un ID específico
-  const construirTrayectoria = (idPersona: number): Array<{x: number, y: number, frameIndex: number}> => {
-    const puntos: Array<{x: number, y: number, frameIndex: number}> = [];
-    
-    frameBuffer.forEach((frame, frameIndex) => {
+  const construirTrayectoria = (idPersona: number) => {
+    return frameBuffer.reduce((puntos, frame, frameIndex) => {
       if (frame.metrics?.tracking_data) {
-        const personData = frame.metrics.tracking_data.find((p: any) => p.id_persona === idPersona);
-        if (personData && personData.centro) {
+        const personData = frame.metrics.tracking_data.find(
+          (p: any) => p.id_persona === idPersona
+        );
+        if (personData?.centro) {
           puntos.push({
             x: personData.centro[0],
             y: personData.centro[1],
@@ -858,9 +856,8 @@ const downloadRecording = async () => {
           });
         }
       }
-    });
-    
-    return puntos;
+      return puntos;
+    }, [] as Array<{x: number, y: number, frameIndex: number}>);
   };
 
   // Función para renderizar trayectorias en el canvas
@@ -1008,16 +1005,16 @@ const downloadRecording = async () => {
             grupo.grupo_ids.includes(p.id_persona)
           );
           if (personas.length > 0) {
-            // Calcular los límites de la caja (mínimo y máximo de las bbox)
+            // Calcular los límites de la caja
             const x1 = Math.min(...personas.map((p: any) => p.bbox[0]));
             const y1 = Math.min(...personas.map((p: any) => p.bbox[1]));
             const x2 = Math.max(...personas.map((p: any) => p.bbox[2]));
             const y2 = Math.max(...personas.map((p: any) => p.bbox[3]));
 
             // Dibujar la caja
-            ctx.strokeStyle = getColorForDirection(direction);
+            ctx.strokeStyle = "#0066ff";
             ctx.lineWidth = 2;
-            ctx.setLineDash([]); // Línea continua para la caja
+            ctx.setLineDash([]); // Línea continua
             ctx.beginPath();
             ctx.rect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
             ctx.stroke();
@@ -1027,56 +1024,76 @@ const downloadRecording = async () => {
     });
   };
 
+  // Nuevo efecto para actualizar trayectorias en tiempo real
+  useEffect(() => {
+    if (!wasLiveRef.current || !isTracking) return;
+    
+    // Actualizar trayectorias para IDs seleccionados
+    setTrayectorias(prev => {
+      const newMap = new Map(prev);
+      idsSeleccionados.forEach(id => {
+        const puntos = construirTrayectoria(id);
+        newMap.set(id, puntos);
+      });
+      return newMap;
+    });
+
+    // Actualizar trayectorias para grupos seleccionados
+    setTrayectoriasGrupos(prev => {
+      const newMap = new Map(prev);
+      gruposSeleccionados.forEach(idGrupo => {
+        const puntos = construirTrayectoriaGrupo(idGrupo);
+        newMap.set(idGrupo, puntos);
+      });
+      return newMap;
+    });
+  }, [frameBuffer, isTracking]); // Se activa con cada nuevo frame
+
   const getGrupoDirection = (idGrupo: number, frameIndex: number): string => {
     const frameMetrics = frameBuffer[frameIndex]?.metrics;
-    if (!frameMetrics?.groups || !frameMetrics?.directions) return "P"; // Valor por defecto: detenido
+    if (!frameMetrics?.groups || !frameMetrics?.directions) return "P";
 
     const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
     if (!grupo || grupo.grupo_ids.length === 0) return "P";
 
-    // Obtener las direcciones de los IDs del grupo
+    // Obtener direcciones de los miembros
     const direcciones = grupo.grupo_ids
       .map((id: number) => frameMetrics.directions[id.toString()]?.[0])
-      .filter((dir: string | undefined) => dir !== undefined);
+      .filter(Boolean);
 
     if (direcciones.length === 0) return "P";
 
-    // Calcular la moda (dirección más común)
+    // Calcular moda (dirección más común)
     const conteo: { [key: string]: number } = {};
     direcciones.forEach((dir: string) => {
       conteo[dir] = (conteo[dir] || 0) + 1;
     });
 
-    // Encontrar la dirección con más ocurrencias
-    return Object.keys(conteo).reduce((a, b) => (conteo[a] > conteo[b] ? a : b), "P");
+    return Object.keys(conteo).reduce((a, b) => 
+      conteo[a] > conteo[b] ? a : b, "P");
   };
 
   const construirTrayectoriaGrupo = (idGrupo: number): Array<{x: number, y: number, frameIndex: number}> => {
-    const puntos: Array<{x: number, y: number, frameIndex: number}> = [];
-    
-    frameBuffer.forEach((frame, frameIndex) => {
+    return frameBuffer.reduce((puntos, frame, frameIndex) => {
       if (frame.metrics?.groups) {
         const grupo = frame.metrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
         if (grupo && grupo.grupo_ids.length > 0) {
-          // Obtener los datos de tracking de los IDs del grupo
           const personas = frame.metrics.tracking_data.filter((p: any) =>
             grupo.grupo_ids.includes(p.id_persona)
           );
           if (personas.length > 0) {
-            // Calcular el centroide (promedio de centros)
-            const centroX = personas.reduce((sum: number, p: any) => sum + p.centro[0], 0) / personas.length;
-            const centroY = personas.reduce((sum: number, p: any) => sum + p.centro[1], 0) / personas.length;
-            puntos.push({
-              x: centroX,
-              y: centroY,
-              frameIndex
-            });
+            // Calcular centroide (promedio de centros)
+            const centroX = personas.reduce((sum: number, p: any) => 
+              sum + p.centro[0], 0) / personas.length;
+            const centroY = personas.reduce((sum: number, p: any) => 
+              sum + p.centro[1], 0) / personas.length;
+            
+            puntos.push({ x: centroX, y: centroY, frameIndex });
           }
         }
       }
-    });
-    
-    return puntos;
+      return puntos;
+    }, [] as Array<{x: number, y: number, frameIndex: number}>);
   };
   
   return (
@@ -1604,12 +1621,17 @@ const downloadRecording = async () => {
                           <div 
                             key={`grupo-${index}`}
                             className={`${styles.metricCard} ${grupoSeleccionado === index ? styles.selectedCard : ""}`}
-                            onClick={() => setGrupoSeleccionado(index)}
+                            onClick={() => {
+                              setGrupoSeleccionado(grupoSeleccionado === index ? null : index);
+                              toggleSeleccionGrupo(grupo.id_grupo[0]);
+                            }}
                           >
                             <div className={styles.cardHeader}>
                               <h4>Grupo {grupo.id_grupo[0]}</h4>
                               <span className={styles.cardStatus}>
-                                {gruposSeleccionados.includes(grupo.id_grupo[0]) ? "Trayectoria activa" : "Click para mostrar trayectoria"}
+                                {gruposSeleccionados.includes(grupo.id_grupo[0]) 
+                                  ? "Trayectoria activa" 
+                                  : "Click para activar trayectoria"}
                               </span>
                               <button
                                 onClick={(e) => {

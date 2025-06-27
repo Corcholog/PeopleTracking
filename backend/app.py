@@ -259,28 +259,36 @@ def get_nearest_distance(
 grupos_detectados = []
 
 # Historial de grupos detectados
-grupos_historicos = {}  # {grupo_id: set(person_ids)}
+grupos_historicos = {}  # {grupo_id: {'person_ids': set, 'last_seen': int}}
 siguiente_grupo_id = 1
 grupos_activos_frame_anterior = set()
 
-def encontrar_grupo_existente(nuevo_grupo_ids, grupos_historicos):
+def encontrar_grupo_existente(grupo_actual_ids, frame_actual, max_frames_missing=10):
     """
-    Busca si ya existe un grupo con al menos el 50% de coincidencia
+    Busca un grupo histórico con al menos un miembro en común visto recientemente
     """
-    nuevo_set = set(nuevo_grupo_ids)
-    mejor_coincidencia = None
-    mejor_score = 0
+    global grupos_historicos
     
-    for grupo_id, grupo_existente in grupos_historicos.items():
-        interseccion = nuevo_set.intersection(grupo_existente)
-        if len(interseccion) > 0:
-            # Porcentaje de coincidencia basado en el grupo más pequeño
-            score = len(interseccion) / min(len(nuevo_set), len(grupo_existente))
-            if score > mejor_score and score >= 0.5:  # Al menos 50% de coincidencia
-                mejor_score = score
-                mejor_coincidencia = grupo_id
+    # Primero: buscar por coincidencia exacta
+    for grupo_id, grupo_info in grupos_historicos.items():
+        if grupo_info['person_ids'] == set(grupo_actual_ids):
+            return grupo_id
     
-    return mejor_coincidencia
+    # Segundo: buscar por superposición reciente
+    mejor_grupo_id = None
+    mejor_coincidencia = 0
+    
+    for grupo_id, grupo_info in grupos_historicos.items():
+        # Solo considerar grupos vistos recientemente
+        if frame_actual - grupo_info['last_seen'] > max_frames_missing:
+            continue
+            
+        interseccion = grupo_info['person_ids'] & set(grupo_actual_ids)
+        if len(interseccion) > mejor_coincidencia:
+            mejor_coincidencia = len(interseccion)
+            mejor_grupo_id = grupo_id
+    
+    return mejor_grupo_id
 
 def have_same_direction(id1, id2, previous_directions, angle_threshold=20):
     """
@@ -297,15 +305,16 @@ def have_same_direction(id1, id2, previous_directions, angle_threshold=20):
     
     return angle < angle_threshold
 
-def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
-    global grupos_historicos, siguiente_grupo_id, grupos_activos_frame_anterior
+def getGroupsRealTime(distance_threshold=100, angle_threshold=20, frame_number=0):
+    global grupos_historicos, siguiente_grupo_id
     
     grupos_detectados_frame = []
     visitados = set()
-    grupos_activos_frame_actual = set()
+    grupos_activos_este_frame = set()
 
     personas = tracking_data_last_frame
 
+    # Paso 1: Detectar grupos en el frame actual
     for i, p1 in enumerate(personas):
         if p1['id_persona'] in visitados:
             continue
@@ -322,40 +331,42 @@ def getGroupsRealTime(distance_threshold=100, angle_threshold=20):
                 grupo.append(p2['id_persona'])
                 visitados.add(p2['id_persona'])
 
-        # Solo procesar si es realmente un grupo (más de 1 persona)
         if len(grupo) > 1:
-            # Buscar si ya existe un grupo con estos IDs
-            grupo_id_existente = encontrar_grupo_existente(grupo, grupos_historicos)
+            grupo_set = set(grupo)
+            
+            # Buscar grupo existente
+            grupo_id_existente = encontrar_grupo_existente(grupo, frame_number)
             
             if grupo_id_existente:
-                # Actualizar el grupo existente
-                grupos_historicos[grupo_id_existente] = set(grupo)
+                # Actualizar grupo existente
+                grupos_historicos[grupo_id_existente] = {
+                    'person_ids': grupo_set,
+                    'last_seen': frame_number
+                }
                 grupo_id_final = grupo_id_existente
             else:
                 # Crear nuevo grupo
                 grupo_id_final = siguiente_grupo_id
-                grupos_historicos[siguiente_grupo_id] = set(grupo)
+                grupos_historicos[grupo_id_final] = {
+                    'person_ids': grupo_set,
+                    'last_seen': frame_number
+                }
                 siguiente_grupo_id += 1
-            
-            grupos_activos_frame_actual.add(grupo_id_final)
-            
+                
+            grupos_activos_este_frame.add(grupo_id_final)
             grupos_detectados_frame.append({
-                'id_grupo': [grupo_id_final],  # ✅ Mantener como lista
+                'id_grupo': [grupo_id_final],
                 'grupo_ids': grupo
             })
 
-    # Limpiar grupos que no han sido detectados en varios frames
-    # (opcional: puedes ajustar esta lógica según tus necesidades)
+    # Paso 2: Limpiar grupos antiguos (no vistos en 10 frames)
     grupos_a_eliminar = []
-    for grupo_id in grupos_historicos:
-        if grupo_id not in grupos_activos_frame_actual and grupo_id not in grupos_activos_frame_anterior:
-            # Si un grupo no aparece en 2 frames consecutivos, lo eliminamos del historial
+    for grupo_id, grupo_info in grupos_historicos.items():
+        if frame_number - grupo_info['last_seen'] > 10:
             grupos_a_eliminar.append(grupo_id)
     
     for grupo_id in grupos_a_eliminar:
         del grupos_historicos[grupo_id]
-    
-    grupos_activos_frame_anterior = grupos_activos_frame_actual.copy()
     
     return grupos_detectados_frame
 
@@ -476,7 +487,8 @@ async def analyze(ws: WebSocket):
             # 🔹 Detectar grupos en el frame actual
             grupos_actuales = getGroupsRealTime(
                 distance_threshold=config_state.get("resolution", (1920, 1080))[1] // 10,
-                angle_threshold=angle_diff_threshold
+                angle_threshold=angle_diff_threshold,
+                frame_number=frame_number  # Pasar el número de frame actual
             )
             if grupos_actuales:
                 print(f"🟢 Grupos detectados en frame {frame_number}:")
@@ -733,8 +745,7 @@ async def clear_url():
     return {"status": "ok"}
 
 def reset_groups():
-    global grupos_historicos, siguiente_grupo_id, grupos_activos_frame_anterior
+    global grupos_historicos, siguiente_grupo_id
     grupos_historicos = {}
     siguiente_grupo_id = 1
-    grupos_activos_frame_anterior = set()
     return {"status": "groups reset"}

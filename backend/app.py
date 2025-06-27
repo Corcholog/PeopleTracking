@@ -111,16 +111,16 @@ class Metrics(BaseModel):
 # ---------------------------------------------------
 # 9) Utilidad de zoom (opcional)
 # ---------------------------------------------------
-def apply_zoom(frame, center, zoom_factor=1.5):
-    if center is None or current_id is None:
-        return frame
-    x, y = center
-    h, w = frame.shape[:2]
-    new_w, new_h = int(w / zoom_factor), int(h / zoom_factor)
-    x1 = max(0, x - new_w // 2); y1 = max(0, y - new_h // 2)
-    x2 = min(w, x + new_w // 2); y2 = min(h, y + new_h // 2)
-    crop = frame[y1:y2, x1:x2]
-    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
+#def apply_zoom(frame, center, zoom_factor=1.5):
+#    if center is None or current_id is None:
+#        return frame
+#    x, y = center
+#    h, w = frame.shape[:2]
+#    new_w, new_h = int(w / zoom_factor), int(h / zoom_factor)
+#    x1 = max(0, x - new_w // 2); y1 = max(0, y - new_h // 2)
+#    x2 = min(w, x + new_w // 2); y2 = min(h, y + new_h // 2)
+#    crop = frame[y1:y2, x1:x2]
+#    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 
@@ -405,8 +405,8 @@ async def analyze(ws: WebSocket):
                 frame_number = 1
                 print("💾 Grabación finalizada sin detener el tracking.")
 
-            if center:
-                annotated = apply_zoom(annotated, center)
+            #if center:
+            #    annotated = apply_zoom(annotated, center)
 
             await ws.send_json({
                 "type": "lista_de_ids",

@@ -1,6 +1,6 @@
 "use client";
 import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 //import { save } from '@tauri-apps/plugin-dialog';
 //import { writeFile  } from '@tauri-apps/plugin-fs';
@@ -66,6 +66,13 @@ const [isPlaying, setIsPlaying] = useState(false);
 const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
 const firstFrameTimeRef = useRef<number | null>(null);
 const [isVideoEnded, setIsVideoEnded] = useState(false);
+
+const [zoomEnabled, setZoomEnabled] = useState(false);
+const [zoomTarget, setZoomTarget] = useState<{
+  id: number | null;
+  center: [number, number] | null;
+}>({ id: null, center: null });
+const [zoomFactor, setZoomFactor] = useState(1.5);
 
 const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
 
@@ -172,6 +179,8 @@ const resetPlaybackState = () => {
   setHistorialMetricasGenerales([]);
   setIdsSeleccionados([]);
   setGrupoSeleccionado(null);
+  setZoomEnabled(false);
+  setZoomTarget({ id: null, center: null });
 };
 
   useEffect(() => {
@@ -235,11 +244,18 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
             bytes[i] = imageData.charCodeAt(i);
           }
           const blob = new Blob([bytes], { type: "image/jpeg" });
-          
+
           // Crear bitmap para live display
           const fullBmp = await createImageBitmap(blob);
-          const now = msg.timestamp || Date.now(); // usar timestamp del backend si está disponible
-          setLiveFrame({ bitmap: fullBmp, time: now });
+          const now = msg.timestamp || Date.now();
+
+          //Aplicar zoom si está habilitado y hay un targetse
+          const liveBmp = zoomEnabled && zoomTarget.center
+              ? await applyZoom(fullBmp, zoomTarget.center, zoomFactor)
+              : fullBmp;
+
+          setLiveFrame({ bitmap: liveBmp, time: now });
+
 
           // Buffer downsample + JPEG para el buffer de reproducción
           const [bw, bh] = resolutionStreaming.split("x").map(Number);
@@ -273,6 +289,7 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
               return next;
             });
           }, "image/jpeg", 0.7);
+
         }
 
         // Manejar el mensaje existente "lista_de_ids" 
@@ -305,6 +322,23 @@ useEffect(() => {
   const frame = frameBuffer[currentIndex];
   const canvas = annotatedCanvasRef.current;
   if (!frame || !canvas) return;
+
+  // Aplicar zoom si está habilitado
+  const drawFrame = async () => {
+    let bitmap = await createImageBitmap(frame.blob);
+    if (zoomEnabled && zoomTarget.center) {
+      bitmap = await applyZoom(bitmap, zoomTarget.center, zoomFactor);
+    }
+
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+  };
+
+  drawFrame();
+
 
   if (frame.metrics) {
     setMetrics(frame.metrics);
@@ -361,6 +395,36 @@ useEffect(() => {
 
   ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
 }, [liveFrame, resolutionStreaming, wasLiveRef.current]);
+
+// 🔥 Nuevo efecto para manejar el zoom
+  useEffect(() => {
+    const canvas = annotatedCanvasRef.current;
+    if (!canvas || !liveFrame) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const drawZoomedFrame = async () => {
+      try {
+        const bitmap = zoomEnabled && zoomTarget?.center
+            ? await applyZoom(liveFrame.bitmap, zoomTarget.center, zoomFactor)
+            : liveFrame.bitmap;
+
+        // Ajusta el canvas al tamaño del bitmap (original o zoomeado)
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        ctx.clearRect(0, 0, canvas.width, canvas.height); // Limpia antes de dibujar
+        ctx.drawImage(bitmap, 0, 0);
+
+
+        if (bitmap !== liveFrame.bitmap) bitmap.close();
+      } catch (error) {
+        console.error("Error dibujando zoom:", error);
+      }
+    };
+
+    drawZoomedFrame();
+  }, [liveFrame, zoomEnabled, zoomTarget, zoomFactor]); // Dependencias clave
 
 useEffect(() => {
   if (!isPlaying) return;
@@ -487,6 +551,44 @@ useEffect(() => {
     return () => clearInterval(intervalId);
   }, [isTracking, fpsLimit, isReady, isConnected, ws]);
 
+  const applyZoom = useCallback(async (
+      source: ImageBitmap | Blob,
+      center: [number, number] | null,
+      zoom: number
+  ): Promise<ImageBitmap> => {
+    if (!center || zoom <= 1.0) {
+      return source instanceof Blob ? await createImageBitmap(source) : source;
+    }
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    const bitmap = source instanceof Blob ? await createImageBitmap(source) : source;
+
+    // Ajusta el tamaño del canvas al del bitmap original
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+
+    // Calcula el área de zoom
+    const zoomWidth = bitmap.width / zoom;
+    const zoomHeight = bitmap.height / zoom;
+    const [cx, cy] = center;
+
+    // Asegúrate de que las coordenadas no excedan los límites
+    const x = Math.max(0, Math.min(cx - zoomWidth / 2, bitmap.width - zoomWidth));
+    const y = Math.max(0, Math.min(cy - zoomHeight / 2, bitmap.height - zoomHeight));
+
+    // Dibuja la porción zoomeada
+    ctx.drawImage(
+        bitmap,
+        x, y, zoomWidth, zoomHeight,  // Source rectangle
+        0, 0, canvas.width, canvas.height  // Destination rectangle
+    );
+
+    const zoomedBitmap = await createImageBitmap(canvas);
+    if (source !== bitmap) bitmap.close();
+    return zoomedBitmap;
+  }, []);
+
   const handleVideoChange = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -554,7 +656,7 @@ useEffect(() => {
 
     if (isTracking) {
       if (isRecording) {
-        await downloadRecording(); // 🧠 usamos la función aparte
+        await downloadRecording(); //  usamos la función aparte
       }
 
       if (isStreaming) {
@@ -661,20 +763,23 @@ const downloadRecording = async () => {
     }
   };
 
-  const handleZoom = async (id: number) => {
-    setSelectedId(id.toString());
-    try {
-      await fetch("http://localhost:8000/set_id/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id }),
-      });
-    } catch (error) {
-      console.error("Error al enviar ID al backend:", error);
-    }
-  };
+  const handleZoom = useCallback((id: number) => {
+    const detection = detections.find(d => d.id === id);
+    if (!detection) return;
+
+    const [x1, y1, x2, y2] = detection.bbox;
+    const center: [number, number] = [
+      (x1 + x2) / 2,
+      (y1 + y2) / 2
+    ];
+
+    setZoomTarget(prev =>
+        prev.id === id && prev.center
+            ? { id: null, center: null }
+            : { id, center }
+    );
+    setZoomEnabled(prev => !(prev && zoomTarget?.id === id));
+  }, [detections, zoomTarget?.id]);
 
   const resetId = async () => {
     setSelectedId("");
@@ -803,17 +908,31 @@ const downloadRecording = async () => {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {!isStopping && selectedId !== "" && (
-                <button onClick={resetId}>Quitar Zoom</button>
-              )}
-              {!isStopping && (
-                <>
-                  {detections.map((det) => (
-                    <button key={det.id} onClick={() => handleZoom(det.id)}>
-                      Zoom al ID {det.id}
-                    </button>
-                  ))}
-                </>
+              {!isStopping && detections.map((det) => (
+                  <button
+                      key={det.id}
+                      onClick={() => handleZoom(det.id)}
+                      className={zoomEnabled && zoomTarget?.id === det.id ? styles.selectedButton : ""}
+                  >
+                    {zoomEnabled && zoomTarget?.id === det.id
+                        ? `Quitar Zoom (ID ${det.id})`
+                        : `Zoom al ID ${det.id}`}
+                  </button>
+              ))}
+              {zoomEnabled && (
+                  <div className={styles.zoomControls}>
+                    <label>Factor:
+                      <input
+                          type="range"
+                          min="1"
+                          max="3"
+                          step="0.1"
+                          value={zoomFactor}
+                          onChange={(e) => setZoomFactor(Number(e.target.value))}
+                      />
+                      {zoomFactor}x
+                    </label>
+                  </div>
               )}
             </div>
           </details>
@@ -823,23 +942,23 @@ const downloadRecording = async () => {
             <div className={styles.optionsContainer}>
               {/* Unidad de procesamiento */}
               {!isTracking && !isStopping && hasGPU === true && (
-                <div className={styles.trackingOption}>
-                  <label>Unidad de procesamiento:</label>
-                  <br />
-                  <select
-                    value={processingUnit}
-                    onChange={(e) => setProcessingUnit(e.target.value)}
-                    disabled={isTracking || isStopping}
-                  >
-                    <option value="gpu">GPU</option>
-                    <option value="cpu">CPU</option>
-                  </select>
-                </div>
+                  <div className={styles.trackingOption}>
+                    <label>Unidad de procesamiento:</label>
+                    <br/>
+                    <select
+                        value={processingUnit}
+                        onChange={(e) => setProcessingUnit(e.target.value)}
+                        disabled={isTracking || isStopping}
+                    >
+                      <option value="gpu">GPU</option>
+                      <option value="cpu">CPU</option>
+                    </select>
+                  </div>
               )}
 
               {/* FPS */}
               {!isTracking && !isStopping && (
-                <div className={styles.trackingOption}>
+                  <div className={styles.trackingOption}>
                   <label>FPS deseados:</label>
                   <br />
                   <input

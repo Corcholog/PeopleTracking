@@ -10,6 +10,7 @@ device = 'cpu'
 
 def set_gpu_usage(use_gpu) -> bool:
     global device, model
+    print(use_gpu)
     if use_gpu and torch.cuda.is_available():
         device = 'cuda'
         model.to(device)

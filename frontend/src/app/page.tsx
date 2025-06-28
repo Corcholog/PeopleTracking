@@ -1,12 +1,43 @@
 "use client";
-import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import styles from "./page.module.css";
-//import { save } from '@tauri-apps/plugin-dialog';
-//import { writeFile  } from '@tauri-apps/plugin-fs';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile  } from '@tauri-apps/plugin-fs';
+import { message } from "@tauri-apps/plugin-dialog";
+
 
 
 export default function DashboardPage() {
+  interface NavigatorWithMemory extends Navigator {
+    deviceMemory?: number;
+  }
+
+  interface PerformanceMemory {
+    usedJSHeapSize: number;
+    totalJSHeapSize: number;
+    jsHeapSizeLimit: number;
+  }
+
+  interface TrackingData {
+    id_persona: number;
+    centro: [number, number];
+    bbox: [number, number, number, number];
+  }
+  
+  interface GroupBack {
+    id_grupo: number[];
+    grupo_ids: number[];
+  }
+  
+  interface Metrics {
+    frame_number: number;
+    total_tracked: number;
+    tracking_data: TrackingData[];
+    directions: Record<string, string[]>;
+    groups?: GroupBack[];
+  }
+
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
@@ -29,124 +60,45 @@ export default function DashboardPage() {
   const [hasGPU, setHasGPU] = useState<boolean>(true);
   const [isStopping, setIsStopping] = useState(false);
   const [isStreaming, setStream] = useState<boolean>(false);
-  const [selectedResolution, setSelectedResolution] = useState("1920x1080"); // Estado para resolución
+  const [selectedResolution, setSelectedResolution] = useState("1920x1080");
 
   const [isRecording, setIsRecording] = useState(false);
-
-  const [metrics, setMetrics] = useState<any>(null);
-
-  const [groupDetections, setGroupDetections] = useState<Array<{ id_grupo: number; grupo_ids: number[] }>>([]);
-
-  const [historialMetricasGenerales, setHistorialMetricasGenerales] = useState<any[]>([]);
-
-  // Estados para las barras laterales
-  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false); // Izquierda
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false); // Derecha
-
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
 
-  const toggleSection = (section: string) => {
-    setActiveSection((prev) => (prev === section ? null : section));
-    setGrupoSeleccionado(null);
-    setIdsSeleccionados([]);
-  };
-  //parte de usar permitir ver frames anteriores:
-  // número máximo de frames a guardar
   const [maxBuffer, setMaxBuffer] = useState<number>(5000);
+  
   type FrameWithMetrics = { 
     blob: Blob; 
     time: number; 
-    metrics?: any; // Las métricas asociadas a este frame
-    detections?: Array<{ id: number; bbox: number[] }>; // Detecciones asociadas
+    metrics?: Metrics;
+    detections?: Array<{ id: number; bbox: number[] }>;
   };
+  
   const [frameBuffer, setFrameBuffer] = useState<FrameWithMetrics[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const wasLiveRef = useRef(true);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x por defecto
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const firstFrameTimeRef = useRef<number | null>(null);
   const [isVideoEnded, setIsVideoEnded] = useState(false);
 
   const [idsSeleccionados, setIdsSeleccionados] = useState<number[]>([]);
-
-  const toggleSeleccionId = (id: number) => {
-    setIdsSeleccionados(prev => {
-      const newIds = prev.includes(id)
-        ? prev.filter(i => i !== id)
-        : [...prev, id];
-      
-      // Forzar actualización inmediata
-      setTrayectorias(prevTray => {
-        const newTray = new Map(prevTray);
-        if (newIds.includes(id)) {
-          newTray.set(id, construirTrayectoria(id));
-        } else {
-          newTray.delete(id);
-        }
-        return newTray;
-      });
-      
-      return newIds;
-    });
-  };
-
-  const toggleSeleccionGrupo = (idGrupo: number) => {
-    setGruposSeleccionados((prev) => {
-      const isCurrentlySelected = prev.includes(idGrupo);
-      
-      if (isCurrentlySelected) {
-        // Remover grupo y su trayectoria
-        setTrayectoriasGrupos(prevTray => {
-          const newTray = new Map(prevTray);
-          newTray.delete(idGrupo);
-          return newTray;
-        });
-        return prev.filter((i) => i !== idGrupo);
-      } else {
-        // Agregar grupo y construir su trayectoria
-        const nuevaTrayectoria = construirTrayectoriaGrupo(idGrupo);
-        setTrayectoriasGrupos(prevTray => {
-          const newTray = new Map(prevTray);
-          newTray.set(idGrupo, nuevaTrayectoria);
-          return newTray;
-        });
-        return [...prev, idGrupo];
-      }
-    });
-  };
-
   const [grupoSeleccionado, setGrupoSeleccionado] = useState<number | null>(null);
-
-  // Estado para trayectorias de grupos
   const [trayectoriasGrupos, setTrayectoriasGrupos] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
-  // Estado para grupos seleccionados
   const [gruposSeleccionados, setGruposSeleccionados] = useState<number[]>([]);
-
-  // Estado temporal para almacenar las últimas métricas recibidas
-  const [latestMetrics, setLatestMetrics] = useState<any>(null);
-  const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
-
-  // Estados para trayectorias
   const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
   const [mostrarTrayectorias, setMostrarTrayectorias] = useState(true);
-
-  //estados para el zoom
   const [zoomConfig, setZoomConfig] = useState<{ x: number; y: number; scale: number } | null>(null);
-
-
-  // 1) Define un estado para el live frame:
   const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
 
-
-    // resolutionStreaming: límite máximo 1280x720
-    // Si el usuario elige menor (p. ej. 854x480), mantén esa
-    const resolutionStreaming = useMemo(() => {
-      const [w, h] = selectedResolution.split("x").map(Number);
-      // ancho máximo 1280, alto máximo 720
-      const sw = Math.min(w, 1280);
-      const sh = Math.min(h, 720);
-      return `${sw}x${sh}`;      // ej: "1280x720" o "854x480"
-    }, [selectedResolution]);
+  const resolutionStreaming = useMemo(() => {
+    const [w, h] = selectedResolution.split("x").map(Number);
+    const sw = Math.min(w, 1280);
+    const sh = Math.min(h, 720);
+    return `${sw}x${sh}`;
+  }, [selectedResolution]);
 
   useEffect(() => {
     // 1. Mapea cada resolución a un tamaño medio de blob JPEG (en KB)
@@ -168,8 +120,9 @@ export default function DashboardPage() {
       avgBlobKB = 20;    // resoluciones menores
     }
 
-    // 2. RAM aproximada reportada por el navegador (GB)
-    const reportedGB = (navigator as any).deviceMemory || 4;
+    // 3. Ahora ya puedes castearlo de forma segura:
+    const nav = navigator as NavigatorWithMemory;
+    const reportedGB: number = nav.deviceMemory ?? 4;
     // % de esa RAM que queremos dedicar al buffer
     const fraction = 0.5;  // 50%
     const budgetMB = reportedGB * 1024 * fraction;    // MB disponibles
@@ -178,7 +131,8 @@ export default function DashboardPage() {
 
     // 3. Si la API performance.memory existe, comprobamos el heap libre
     let safeFrames = theoreticalFrames;
-    const perf = (performance as any).memory;
+    const perfNav = performance as Performance & { memory?: PerformanceMemory };
+    const perf: PerformanceMemory | undefined = perfNav.memory;
     if (perf && perf.usedJSHeapSize && perf.jsHeapSizeLimit) {
       const usedMB  = perf.usedJSHeapSize  / 1024 / 1024;
       const limitMB = perf.jsHeapSizeLimit / 1024 / 1024;
@@ -192,6 +146,7 @@ export default function DashboardPage() {
     }
 
     // 4. Establecemos maxBuffer
+    console.log(safeFrames);
     setMaxBuffer(safeFrames);
 
   }, [resolutionStreaming]);
@@ -202,24 +157,35 @@ export default function DashboardPage() {
     }
   };
 
-  const resetFirstFrameTime = () => {
-    if (frameBuffer.length > 0) {
-      firstFrameTimeRef.current = frameBuffer[0].time;
-    } else {
-      firstFrameTimeRef.current = null;
-    }
-  };
+
+  
   const resetPlaybackState = () => {
     setFrameBuffer([]);
     setCurrentIndex(-1);
     firstFrameTimeRef.current = null;
     wasLiveRef.current = true;
-    setHistorialMetricasGenerales([]);
     setIdsSeleccionados([]);
     setGrupoSeleccionado(null);
     setTrayectorias(new Map());
+
+    // Espera al siguiente ciclo de render
+  setTimeout(() => {
+    console.log("✅ Luego del reset:");
+    console.log("Buffer:", frameBuffer);
+    console.log("Index:", currentIndex);
+    console.log("First frame time:", firstFrameTimeRef.current);
+  }, 0);
   };
 
+  const resetIds = async () => {
+  try {
+    if (isFirstReady) {
+      await fetch("http://localhost:8000/reset_model/", { method: "POST" });
+    }
+  } catch (err) {
+    console.error("Todavía no cargó el backend:", err);
+  }
+};
 
   useEffect(() => {
     const checkBackendReady = async () => {
@@ -228,7 +194,7 @@ export default function DashboardPage() {
         const data = await res.json();
         if (data.ready) {
           setisFirstReady(true);
-          clearInterval(interval); // 🧼 Detiene el polling
+          clearInterval(interval);
         }
       } catch {
         console.log("⏳ Backend no disponible todavía");
@@ -236,44 +202,20 @@ export default function DashboardPage() {
     };
 
     const interval = setInterval(checkBackendReady, 1000);
-    checkBackendReady(); // 👈 Primer intento inmediato
+    checkBackendReady();
 
     return () => clearInterval(interval);
   }, []);
 
-  // Nuevo uso del WebSocket
-const { send, waitUntilReady, isConnected, isReady, connect, ws } =
-  useWebSocket({
+  const { send, waitUntilReady, isConnected, isReady, connect, ws } = useWebSocket({
     url: "ws://localhost:8000/ws/analyze/",
     onMessage: async (evt: MessageEvent) => {
       if (typeof evt.data === "string") {
         const msg = JSON.parse(evt.data);
 
-        // Manejar el mensaje de métricas y detecciones
         if (msg.type === "frame_with_metrics") {
-          // Actualizar estados existentes
           setDetections(msg.detections);
-          setMetrics(msg.metrics);
           
-          if (msg.metrics?.groups) {
-            const grupos = msg.metrics.groups.map((g: any) => ({
-              id_grupo: g.id_grupo[0],
-              grupo_ids: g.grupo_ids
-            }));
-            setGroupDetections(grupos);
-          }
-
-          if (msg.metrics?.tracking_data) {
-            setHistorialMetricasGenerales((prev) => {
-              const yaExiste = prev.some((m) => m.frame_number === msg.metrics.frame_number);
-              if (!yaExiste) {
-                return [...prev, msg.metrics];
-              }
-              return prev;
-            });
-          }
-
-          // Convertir base64 a blob
           const imageData = atob(msg.image);
           const bytes = new Uint8Array(imageData.length);
           for (let i = 0; i < imageData.length; i++) {
@@ -281,12 +223,10 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
           }
           const blob = new Blob([bytes], { type: "image/jpeg" });
           
-          // Crear bitmap para live display
           const fullBmp = await createImageBitmap(blob);
-          const now = msg.timestamp || Date.now(); // usar timestamp del backend si está disponible
+          const now =  Date.now();
           setLiveFrame({ bitmap: fullBmp, time: now });
 
-          // Buffer downsample + JPEG para el buffer de reproducción
           const [bw, bh] = resolutionStreaming.split("x").map(Number);
           const off = document.createElement("canvas");
           off.width = bw;
@@ -298,12 +238,11 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
             if (!smallBlob) return;
 
             setFrameBuffer((buf) => {
-              // Crear el frame con métricas YA sincronizadas
               const newFrame: FrameWithMetrics = { 
                 blob: smallBlob, 
                 time: now,
-                metrics: msg.metrics, // ✅ Métricas ya sincronizadas
-                detections: msg.detections // ✅ Detecciones ya sincronizadas
+                metrics: msg.metrics,
+                detections: msg.detections
               };
               
               const next = buf.length >= maxBuffer
@@ -311,7 +250,6 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
                 : [...buf, newFrame];
               registerFrameTime(now);
               
-              // Si estamos en live, avanza el índice al último
               if (wasLiveRef.current) {
                 setCurrentIndex(next.length - 1);
               }
@@ -319,7 +257,6 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
             });
           }, "image/jpeg", 0.7);
         }
-
       }
     },
     onStopped: () => {
@@ -330,605 +267,14 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
       setSelectedDevice("");
       setStream(false);
       setDetections([]);
-      setGroupDetections([]);
-      // Limpiar también las métricas temporales
-      setLatestMetrics(null);
-      setLatestDetections([]);
       resetPlaybackState();
       clearZoom();
       setIsVideoEnded(false);
+      resetIds();
     },
   });
 
-useEffect(() => {
-  if (wasLiveRef.current) return;
-  // toma el frame actual del buffer, que ahora es { blob, time }
-  const frame = frameBuffer[currentIndex];
-  if (!annotatedCanvasRef.current) return;
-  
-  const canvas = annotatedCanvasRef.current;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  if (!frame || !canvas) return;
-
-  if (frame.metrics) {
-    setMetrics(frame.metrics);
-  }
-  if (frame.detections) {
-    setDetections(frame.detections);
-  }
-  if (!ctx) return;
-
-  let didCancel = false;
-
-  // paso asíncrono: blob → ImageBitmap
-
-  createImageBitmap(frame.blob)
-    .then((bitmap) => {
-      if (didCancel) {
-        // el índice cambió antes de terminar de crear el bitmap
-        bitmap.close?.();
-        return;
-      }
-      // ajusta tamaño del canvas al del bitmap
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      // dibuja
-      const bbox = frame.detections?.find(d => d.id.toString() === selectedId)?.bbox;
-      if (zoomConfig && bbox) {
-        applyZoom(ctx, bitmap, zoomConfig, bbox);
-      } else {
-        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      }
-
-      dibujarTrayectorias(canvas);
-
-      // limpia recursos si es posible
-      bitmap.close?.();
-    })
-    .catch((err) => {
-      console.error("Error creando ImageBitmap:", err);
-    });
-
-  // cleanup si currentIndex cambia antes de que termine createImageBitmap
-  return () => {
-    didCancel = true;
-  };
-}, [currentIndex, frameBuffer, trayectorias, trayectoriasGrupos]);
-
-// Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte: se agrego lo del zoom
-useEffect(() => {
-  if (!liveFrame) return;
-  if (!wasLiveRef.current) return;
-
-  const canvas = annotatedCanvasRef.current;
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  createImageBitmap(liveFrame.bitmap).then(bitmap => {
-  const bbox = detections.find(d => d.id.toString() === selectedId)?.bbox;
-  if (zoomConfig && bbox) {
-    applyZoom(ctx, bitmap, zoomConfig, bbox);
-  } else {
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  }
-    dibujarTrayectorias(canvas);
-    bitmap.close?.();
-  });
-}, [liveFrame, resolutionStreaming, zoomConfig]);
-
-useEffect(() => {
-  if (!isPlaying) return;
-  let rafId: number;
-  let lastTime = performance.now();
-
-  const loop = (now: number) => {
-    const elapsed = now - lastTime;
-    const interval = 1000 / fpsLimit / playbackSpeed;
-    if (elapsed >= interval) {
-      setCurrentIndex((i) => {
-        const next = Math.min(i + 1, frameBuffer.length - 1);
-        if (next === frameBuffer.length - 1) {
-          setIsPlaying(false);
-          wasLiveRef.current = true;
-        }
-        return next;
-      });
-      lastTime = now;
-    }
-    if (isPlaying) rafId = requestAnimationFrame(loop);
-  };
-  rafId = requestAnimationFrame(loop);
-  return () => cancelAnimationFrame(rafId);
-}, [isPlaying, fpsLimit, playbackSpeed, frameBuffer.length]);
-
-  useEffect(() => {
-    const checkHardwareStatus = async () => {
-      try {
-        while (!isFirstReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100)); // espera 100ms
-        }
-        const res = await fetch("http://localhost:8000/hardware_status/");
-        const data = await res.json();
-        setHasGPU(data.has_gpu);
-      } catch (error) {
-        console.error("Error al obtener el estado de hardware:", error);
-        setHasGPU(false);
-      }
-    };
-    checkHardwareStatus();
-  }, []);
-
-  // Listar cámaras disponibles
-  useEffect(() => {
-    async function listarCamaras() {
-      await navigator.mediaDevices.getUserMedia({ video: true });
-      const all = await navigator.mediaDevices.enumerateDevices();
-      setDevices(all.filter((d) => d.kind === "videoinput"));
-    }
-    listarCamaras();
-  }, []);
-
-
-  // Cambiar a cámara seleccionada
-  useEffect(() => {
-    if (!selectedDevice) return;
-
-    let stream: MediaStream;
-    const [width, height] = selectedResolution.split("x").map(Number);
-
-    const constraints: MediaStreamConstraints = {
-      video: {
-        deviceId: { exact: selectedDevice },
-        width,
-        height,
-      },
-    };
-
-    (async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (err) {
-        console.warn("Error con cámara específica:", err);
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        setSelectedDevice("");
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    })();
-
-    return () => {
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-    };
-  }, [selectedDevice, selectedResolution]);
-
-  useEffect(() => {
-    if (
-      !isTracking || 
-      !videoRef.current ||
-      !rawCanvasRef.current ||
-      !annotatedCanvasRef.current
-    )
-      return;
-    if (!isReady || !isConnected || !ws) return;
-
-    const intervalId = setInterval(() => {
-      const videoEl = videoRef.current!;
-
-      if (videoEl.ended || videoEl.paused) {
-        clearInterval(intervalId);
-        setIsVideoEnded(true);     // opcional
-        return;
-      }
-
-      const canvas = rawCanvasRef.current!;
-      const [width, height] = selectedResolution.split("x").map(Number);
-      if (ws.readyState !== WebSocket.OPEN) return;
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(videoEl, 0, 0, width, height);
-      canvas.toBlob(
-        (blob) => {
-          if (blob) send(blob);
-        },
-        "image/jpeg",
-        0.7
-      );
-    }, 1000 / fpsLimit);
-
-    return () => clearInterval(intervalId);
-  }, [isTracking, fpsLimit, isReady, isConnected, ws]);
-
-  const handleVideoChange = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    try {
-      if (isFirstReady) {
-        await fetch("http://localhost:8000/reset_model/", { method: "POST" });
-      }
-    } catch (err) {
-      console.error("Todavía no cargó el backend:", err);
-    }
-
-    const file = event.target.files?.[0];
-    if (file) {
-      const videoUrl = URL.createObjectURL(file);
-      setVideoSrc(videoUrl);
-      setIsCameraActive(false);
-      setIsTracking(false);
-      setDetections([]);
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""; // Clear file input
-      }
-      clearZoom();
-    }
-  };
-
-  const handleAddUrl = async () => {
-    const url = prompt("Ingresa la URL del Streaming:");
-    if (!url) return;
-    try {
-      const response = await fetch("http://localhost:8000/upload-url", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ imageUrl: url, stream_url: true, resolution: selectedResolution }),
-      });
-      setStream(true);
-      if (!response.ok) {
-        throw new Error("Error al enviar la URL al backend.");
-      }
-      handleStartTracking();
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const handleStartCamera = () => {
-    try {
-      if (isFirstReady)
-        fetch("http://localhost:8000/reset_model/", { method: "POST" });
-    } catch (err) {
-      console.error("Todavia no cargo el backend:", err);
-    }
-    setVideoSrc(null);
-    setIsCameraActive(true);
-    setIsTracking(false);
-  };
-
-  const handleStopCamera = async () => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-    }
-
-    if (isTracking) {
-      if (isRecording) {
-        await downloadRecording(); // 🧠 usamos la función aparte
-      }
-
-      if (isStreaming) {
-        try {
-          await fetch("http://localhost:8000/clear-url", { method: "POST" });
-        } catch (error) {
-          console.error(error);
-        }
-      }
-
-      send(JSON.stringify({ type: "stop" }));
-      setIsStopping(true);
-    } else {
-      setVideoSrc(null);
-      setIsCameraActive(false);
-      setSelectedDevice("");
-      setStream(false);
-
-    }
-    clearZoom();
-    resetPlaybackState();
-    setIsVideoEnded(false);
-    setDetections([]);
-    setIsTracking(false);
-  };
-
-const downloadRecording = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/stop_recording/", {
-        method: "POST",
-      });
-
-      if (!response.ok) throw new Error("Fallo al detener la grabación");
-
-      setIsRecording(false);
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-
-      const now = new Date();
-      const pad = (n: number) => n.toString().padStart(2, "0");
-      const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-        now.getDate()
-      )}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(
-        now.getSeconds()
-      )}`;
-      const filename = `grabacion-${timestamp}.mp4`;
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-    } catch (error) {
-      console.error("Error al descargar grabación:", error);
-    }
-  };
-
-
-
-
-  const handleResolutionChange = async (
-    e: React.ChangeEvent<HTMLSelectElement>
-  ): Promise<void> => {
-
-    let newRes = e.target.value;
-    if (newRes === "4k") newRes = "3840x2160";
-    if (newRes === "2k") newRes = "2560x1440";
-
-    setSelectedResolution(newRes);
-
-  };
-
-  const handleStartTracking = async () => {
-    connect(); // abrís el socket acá
-    await waitUntilReady(); // esperás a que responda con “ready”
-    setIsTracking(true);
-    resetPlaybackState();  // 👈 limpiás todo antes de empezar
-    resetFirstFrameTime();
-    setVideoSrc(null);
-    setIsCameraActive(true);
-    clearZoom();
-    if (
-      videoRef.current &&
-      (videoRef.current.srcObject || videoRef.current.src)
-    ) {
-      videoRef.current.play().catch(console.error);
-    }
-  };
-
-  const handleStartRecording = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/start_recording/", {
-        method: "POST",
-      });
-      if (!response.ok) {
-        throw new Error("Fallo en el backend");
-      }
-      setIsRecording(true);
-    } catch (error) {
-      console.error("Error al iniciar la grabación:", error);
-    }
-  };
-
-  //funciones zoom
-
-  //ver si un id no esta mas.
-useEffect(() => {
-  if (!selectedId) return;
-  const ids = (wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections)?.map(d => d.id.toString()) || [];
-  if (!ids.includes(selectedId)) {
-    alert(`El ID ${selectedId} ya no aparece en este frame`);
-    clearZoom();
-  }
-}, [currentIndex, frameBuffer, detections, selectedId]);
-//actualizar el centro en cada diferente frame
-useEffect(() => {
-  if (!selectedId || !zoomConfig) return;
-
-  const deteccionesActuales = wasLiveRef.current
-    ? detections
-    : frameBuffer[currentIndex]?.detections;
-
-  const bbox = deteccionesActuales?.find(d => d.id.toString() === selectedId)?.bbox;
-
-  if (!bbox) return;
-
-  const [x1, y1, x2, y2] = bbox;
-  const centroX = x1 + (x2 - x1) / 2;
-  const centroY = y1 + (y2 - y1) / 2;
-
-  // Solo actualizamos si cambia el centro (dejamos la escala fija)
-  if (zoomConfig.x !== centroX || zoomConfig.y !== centroY) {
-    setZoomConfig((prev) => prev ? { ...prev, x: centroX, y: centroY } : null);
-  }
-}, [detections, frameBuffer, currentIndex, selectedId]);
-
-
-  function applyZoom(
-  ctx: CanvasRenderingContext2D,
-  img: ImageBitmap,
-  cfg: { x: number; y: number; scale: number },
-  bbox?: number[]
-) {
-  const { x, y, scale } = cfg;
-  const sw = img.width / scale;
-  const sh = img.height / scale;
-
-  // Recorte
-  const sx = Math.max(0, Math.min(img.width - sw, x - sw / 2));
-  const sy = Math.max(0, Math.min(img.height - sh, y - sh / 2));
-
-  // Dibujo del zoom
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  // Opcional: dibujar bbox dentro del canvas
-  if (bbox) {
-    const [bx1, by1, bx2, by2] = bbox;
-
-    // bbox proyectado a canvas:
-    const scaleX = ctx.canvas.width / sw;
-    const scaleY = ctx.canvas.height / sh;
-    const canvasX = (bx1 - sx) * scaleX;
-    const canvasY = (by1 - sy) * scaleY;
-    const canvasW = (bx2 - bx1) * scaleX;
-    const canvasH = (by2 - by1) * scaleY;
-
-    ctx.strokeStyle = "yellow";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(canvasX, canvasY, canvasW, canvasH);
-  }
-}
-
-
-
-  const handleZoom = (id: number) => {
-  const det = detections.find(d => d.id === id);
-  if (!det) {
-    // avisito si ya no está
-    alert(`El ID ${id} ya no está en el frame actual`);
-    setZoomConfig(null);
-    return;
-  }
-  setSelectedId(id.toString());
-  setZoomConfig({ x: det.bbox[0] + (det.bbox[2]-det.bbox[0])/2,
-                  y: det.bbox[1] + (det.bbox[3]-det.bbox[1])/2,
-                  scale: 2 });
-};
-
-  const clearZoom = () => {
-  setSelectedId("");
-  setZoomConfig(null);
-};
-
-  
-  useEffect(() => {
-    const sendTrackingConfig = async () => {
-      if (isTracking) {
-        console.warn("No se puede cambiar CPU/GPU mientras se está trackeando");
-        return;
-      }
-      const config = {
-        confidence: confidenceThreshold / 100,
-        gpu: processingUnit === "gpu",
-        fps: fpsLimit,
-      };
-
-      try {
-        // Esperar hasta que isFirstReady sea true
-        while (!isFirstReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100)); // espera 100ms
-        }
-
-        // Una vez que isFirstReady es true, se envía la configuración
-        const res = await fetch("http://localhost:8000/config/", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(config),
-        });
-
-      } catch (err) {
-        console.error("Error al enviar configuración:", err);
-      }
-    };
-
-    sendTrackingConfig();
-  }, [processingUnit, confidenceThreshold]);
-
-  // Cambio de FPSs
-  useEffect(() => {
-    const updateFpsSetting = async () => {
-      if (isTracking) {
-        console.warn("No se puede cambiar FPS mientras se está trackeando");
-        return;
-      }
-
-      try {
-        while (!isFirstReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100)); // espera 100ms
-        }
-        await fetch("http://localhost:8000/config/", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ fps: fpsLimit }),
-        });
-      } catch (err) {
-        console.error("Error al actualizar FPS:", err);
-      }
-    };
-
-    updateFpsSetting();
-  }, [fpsLimit]);
-
-  // funciones para manejar las barras laterales
-  const openLeftSidebar = () => {
-    setIsLeftSidebarOpen(true);
-    setIsRightSidebarOpen(false); // Cierra la derecha
-  };
-
-  const openRightSidebar = () => {
-    setIsRightSidebarOpen(true);
-    setIsLeftSidebarOpen(false); // Cierra la izquierda
-  };
-
-
-  const elapsedSec =
-  currentIndex >= 0 &&
-  frameBuffer[currentIndex] &&
-  firstFrameTimeRef.current !== null
-    ? ((frameBuffer[currentIndex].time - firstFrameTimeRef.current) / 1000).toFixed(1)
-    : "0.0";
-
-
-  // Mapa de colores por dirección (evitando verde)
-  const directionColorMap: { [key: string]: string } = {
-    P: "hsl(0, 70%, 50%)",   // Stopped: Rojo
-    D: "hsl(60, 70%, 50%)",  // East: Amarillo
-    Q: "hsl(45, 70%, 50%)",  // Northeast: Amarillo-naranja
-    W: "hsl(90, 70%, 50%)",  // North: Verde claro (ligeramente diferente al verde de tracking)
-    E: "hsl(135, 70%, 50%)", // Northwest: Cian-verde
-    A: "hsl(180, 70%, 50%)", // West: Cian
-    Z: "hsl(225, 70%, 50%)", // Southwest: Azul
-    S: "hsl(270, 70%, 50%)", // South: Púrpura
-    C: "hsl(315, 70%, 50%)", // Southeast: Magenta
-  };
-
-  // Función para obtener color según la dirección
-  const getColorForDirection = (direction: string): string => {
-    return directionColorMap[direction] || "hsl(0, 0%, 50%)"; // Gris por defecto si no hay dirección
-  };
-
-  // Función para construir trayectoria de un ID específico
-  const construirTrayectoria = (idPersona: number) => {
-    return frameBuffer.reduce((puntos, frame, frameIndex) => {
-      if (frame.metrics?.tracking_data) {
-        const personData = frame.metrics.tracking_data.find(
-          (p: any) => p.id_persona === idPersona
-        );
-        if (personData?.centro) {
-          puntos.push({
-            x: personData.centro[0],
-            y: personData.centro[1],
-            frameIndex
-          });
-        }
-      }
-      return puntos;
-    }, [] as Array<{x: number, y: number, frameIndex: number}>);
-  };
-
-  // Función para renderizar trayectorias en el canvas
-  const dibujarTrayectorias = (canvas: HTMLCanvasElement) => {
+  const dibujarTrayectorias = useCallback((canvas: HTMLCanvasElement) => {
     if (!mostrarTrayectorias || (trayectorias.size === 0 && trayectoriasGrupos.size === 0)) return;
 
     const ctx = canvas.getContext("2d");
@@ -1066,17 +412,17 @@ useEffect(() => {
       // Dibujar caja del grupo en el frame actual
       const frameMetrics = frameBuffer[currentIndex]?.metrics;
       if (frameMetrics?.groups) {
-        const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+        const grupo = frameMetrics.groups.find((g: GroupBack) => g.id_grupo[0] === idGrupo);
         if (grupo && grupo.grupo_ids.length > 0) {
-          const personas = frameMetrics.tracking_data.filter((p: any) =>
+          const personas = frameMetrics.tracking_data.filter((p: TrackingData) =>
             grupo.grupo_ids.includes(p.id_persona)
           );
           if (personas.length > 0) {
             // Calcular los límites de la caja
-            const x1 = Math.min(...personas.map((p: any) => p.bbox[0]));
-            const y1 = Math.min(...personas.map((p: any) => p.bbox[1]));
-            const x2 = Math.max(...personas.map((p: any) => p.bbox[2]));
-            const y2 = Math.max(...personas.map((p: any) => p.bbox[3]));
+            const x1 = Math.min(...personas.map(p => p.bbox[0]));
+            const y1 = Math.min(...personas.map(p => p.bbox[1]));
+            const x2 = Math.max(...personas.map(p => p.bbox[2]));
+            const y2 = Math.max(...personas.map(p => p.bbox[3]));
 
             // Dibujar la caja
             ctx.strokeStyle = "#0066ff";
@@ -1089,13 +435,608 @@ useEffect(() => {
         }
       }
     });
+  }, [mostrarTrayectorias, trayectorias, trayectoriasGrupos, selectedResolution, currentIndex, frameBuffer]);
+
+  const applyZoom = useCallback((
+    ctx: CanvasRenderingContext2D,
+    img: ImageBitmap,
+    cfg: { x: number; y: number; scale: number },
+    bbox?: number[]
+  ) => {
+    const { x, y, scale } = cfg;
+    const sw = img.width / scale;
+    const sh = img.height / scale;
+
+    const sx = Math.max(0, Math.min(img.width - sw, x - sw / 2));
+    const sy = Math.max(0, Math.min(img.height - sh, y - sh / 2));
+
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    if (bbox) {
+      const [bx1, by1, bx2, by2] = bbox;
+      const scaleX = ctx.canvas.width / sw;
+      const scaleY = ctx.canvas.height / sh;
+      const canvasX = (bx1 - sx) * scaleX;
+      const canvasY = (by1 - sy) * scaleY;
+      const canvasW = (bx2 - bx1) * scaleX;
+      const canvasH = (by2 - by1) * scaleY;
+
+      ctx.strokeStyle = "yellow";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(canvasX, canvasY, canvasW, canvasH);
+    }
+  }, []);
+
+
+  
+  const handleZoom = useCallback((id: number) => {
+    const dets = wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections || [];
+const det = dets.find(d => d.id === id);
+    if (!det) {
+      message(`El ID ${id} ya no está en el frame actual`, {
+      title: "Error de Zoom",
+    });
+      setZoomConfig(null);
+      return;
+    }
+    setSelectedId(id.toString());
+    setZoomConfig({ 
+      x: det.bbox[0] + (det.bbox[2]-det.bbox[0])/2,
+      y: det.bbox[1] + (det.bbox[3]-det.bbox[1])/2,
+      scale: 2 
+    });
+  }, [detections]);
+
+  const clearZoom = useCallback(() => {
+    setSelectedId("");
+    setZoomConfig(null);
+  }, []);
+
+  useEffect(() => {
+  if (wasLiveRef.current) return;
+  // toma el frame actual del buffer, que ahora es { blob, time }
+  const frame = frameBuffer[currentIndex];
+  if (!annotatedCanvasRef.current) return;
+  
+  const canvas = annotatedCanvasRef.current;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  if (!frame || !canvas) return;
+  
+
+  if (!ctx) return;
+
+  let didCancel = false;
+
+  // paso asíncrono: blob → ImageBitmap
+  const [bw, bh] = resolutionStreaming.split("x").map(Number);
+  if(canvas.width != bw || canvas.height != bh){
+    canvas.width = bw;
+    canvas.height = bh;
+  }
+
+
+  createImageBitmap(frame.blob)
+    .then((bitmap) => {
+      if (didCancel) {
+        // el índice cambió antes de terminar de crear el bitmap
+        bitmap.close?.();
+        return;
+      }
+      // ajusta tamaño del canvas al del bitmap
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      // dibuja
+      const bbox = frame.detections?.find(d => d.id.toString() === selectedId)?.bbox;
+      if (zoomConfig && bbox) {
+        applyZoom(ctx, bitmap, zoomConfig, bbox);
+      } else {
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      }
+
+      dibujarTrayectorias(canvas);
+
+      // limpia recursos si es posible
+      bitmap.close?.();
+    })
+    .catch((err) => {
+      console.error("Error creando ImageBitmap:", err);
+    });
+
+  // cleanup si currentIndex cambia antes de que termine createImageBitmap
+  return () => {
+    didCancel = true;
+  };
+}, [currentIndex, frameBuffer, trayectorias, trayectoriasGrupos]);
+
+// Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte: se agrego lo del zoom
+useEffect(() => {
+  if (!liveFrame) return;
+  if (!wasLiveRef.current) return;
+
+  const canvas = annotatedCanvasRef.current;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const [bw, bh] = selectedResolution.split("x").map(Number);
+  // paso asíncrono: blob → ImageBitmap
+  if(canvas.width != bw || canvas.height != bh){
+    canvas.width = bw;
+    canvas.height = bh;
+  }
+  createImageBitmap(liveFrame.bitmap).then(bitmap => {
+  const bbox = detections.find(d => d.id.toString() === selectedId)?.bbox;
+  if (zoomConfig && bbox) {
+    applyZoom(ctx, bitmap, zoomConfig, bbox);
+  } else {
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  }
+    dibujarTrayectorias(canvas);
+    bitmap.close?.();
+  });
+}, [liveFrame, resolutionStreaming, zoomConfig]);
+
+
+  useEffect(() => {
+  if (!isPlaying) return;
+  let rafId: number;
+  let lastTime = performance.now();
+
+  const loop = (now: number) => {
+    const elapsed = now - lastTime;
+    const interval = 1000 / fpsLimit / playbackSpeed;
+    if (elapsed >= interval) {
+      setCurrentIndex((i) => {
+        const next = Math.min(i + 1, frameBuffer.length - 1);
+        if (next === frameBuffer.length - 1) {
+          setIsPlaying(false);
+          wasLiveRef.current = true;
+        }
+        return next;
+      });
+      lastTime = now;
+    }
+    if (isPlaying) rafId = requestAnimationFrame(loop);
+  };
+  rafId = requestAnimationFrame(loop);
+  return () => cancelAnimationFrame(rafId);
+}, [isPlaying, fpsLimit, playbackSpeed, frameBuffer.length]);
+
+  useEffect(() => {
+    const checkHardwareStatus = async () => {
+      try {
+        while (!isFirstReady) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        const res = await fetch("http://localhost:8000/hardware_status/");
+        const data = await res.json();
+        setHasGPU(data.has_gpu);
+      } catch (error) {
+        console.error("Error al obtener el estado de hardware:", error);
+        setHasGPU(false);
+      }
+    };
+    checkHardwareStatus();
+  }, [isFirstReady]);
+
+  useEffect(() => {
+    async function listarCamaras() {
+      await navigator.mediaDevices.getUserMedia({ video: true });
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setDevices(all.filter((d) => d.kind === "videoinput"));
+    }
+    listarCamaras();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDevice) return;
+
+    let stream: MediaStream;
+    const [width, height] = selectedResolution.split("x").map(Number);
+
+    const constraints: MediaStreamConstraints = {
+      video: {
+        deviceId: { exact: selectedDevice },
+        width,
+        height,
+      },
+    };
+
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        console.warn("Error con cámara específica:", err);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setSelectedDevice("");
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    })();
+
+    return () => {
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+    };
+  }, [selectedDevice, selectedResolution]);
+
+  useEffect(() => {
+    if (
+      !isTracking || 
+      !videoRef.current ||
+      !rawCanvasRef.current ||
+      !annotatedCanvasRef.current
+    )
+      return;
+    if (!isReady || !isConnected || !ws) return;
+
+    const intervalId = setInterval(() => {
+      const videoEl = videoRef.current!;
+
+      if (!isStreaming && (videoEl.ended || videoEl.paused)) {
+        clearInterval(intervalId);
+        setIsVideoEnded(true);
+        return;
+      }
+
+      const canvas = rawCanvasRef.current!;
+      const [width, height] = selectedResolution.split("x").map(Number);
+      if (ws.readyState !== WebSocket.OPEN) return;
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(videoEl, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) send(blob);
+        },
+        "image/jpeg",
+        0.7
+      );
+    }, 1000 / fpsLimit);
+
+    return () => clearInterval(intervalId);
+  }, [isTracking, fpsLimit, isReady, isConnected, ws, selectedResolution, send]);
+
+  const handleVideoChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    try {
+      if (isFirstReady) {
+        await fetch("http://localhost:8000/reset_model/", { method: "POST" });
+      }
+    } catch (err) {
+      console.error("Todavía no cargó el backend:", err);
+    }
+
+    const file = event.target.files?.[0];
+    if (file) {
+      const videoUrl = URL.createObjectURL(file);
+      setVideoSrc(videoUrl);
+      setIsCameraActive(false);
+      setIsTracking(false);
+      setDetections([]);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      clearZoom();
+    }
   };
 
-  // Nuevo efecto para actualizar trayectorias en tiempo real
+  const handleAddUrl = async () => {
+    const url = prompt("Ingresa la URL del Streaming:");
+    if (!url) return;
+    try {
+      const response = await fetch("http://localhost:8000/upload-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ imageUrl: url, stream_url: true, resolution: selectedResolution }),
+      });
+      setStream(true);
+      if (!response.ok) {
+        throw new Error("Error al enviar la URL al backend.");
+      }
+      handleStartTracking();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleStartCamera = () => {
+    try {
+      if (isFirstReady)
+        fetch("http://localhost:8000/reset_model/", { method: "POST" });
+    } catch (err) {
+      console.error("Todavia no cargo el backend:", err);
+    }
+    setVideoSrc(null);
+    setIsCameraActive(true);
+    setIsTracking(false);
+  };
+
+  const handleStopCamera = async () => {
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((track) => track.stop());
+    }
+
+    if (isTracking) {
+      if (isRecording) {
+        await downloadRecording();
+      }
+
+      if (isStreaming) {
+        try {
+          await fetch("http://localhost:8000/clear-url", { method: "POST" });
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      send(JSON.stringify({ type: "stop" }));
+      setIsStopping(true);
+    } else {
+      setVideoSrc(null);
+      setIsCameraActive(false);
+      setSelectedDevice("");
+      setStream(false);
+    }
+    clearZoom();
+    resetPlaybackState();
+    setIsVideoEnded(false);
+    setDetections([]);
+    setIsTracking(false);
+  };
+const downloadRecording = async () => {
+  try {
+    const response = await fetch("http://localhost:8000/stop_recording/", {
+      method: "POST",
+    });
+
+    if (!response.ok) throw new Error("Fallo al detener la grabación");
+    setIsRecording(false);
+
+    const blob = await response.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
+      now.getDate()
+    )}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(
+      now.getSeconds()
+    )}`;
+    const defaultFilename = `grabacion-${timestamp}.mp4`;
+
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{ name: "Video", extensions: ["mp4"] }],
+    });
+
+    if (!filePath) {
+      console.log("El usuario canceló el guardado.");
+      return;
+    }
+
+    await writeFile(filePath, uint8Array);
+
+
+    console.log("Archivo guardado exitosamente:", filePath);
+
+  } catch (err) {
+    console.error('Error al descargar grabación:', err);
+  }
+};
+
+  const handleResolutionChange = async (
+    e: React.ChangeEvent<HTMLSelectElement>
+  ): Promise<void> => {
+    let newRes = e.target.value;
+    if (newRes === "4k") newRes = "3840x2160";
+    if (newRes === "2k") newRes = "2560x1440";
+    setSelectedResolution(newRes);
+  };
+
+  const handleStartTracking = async () => {
+    connect();
+    await waitUntilReady();
+    setIsTracking(true);
+    resetPlaybackState();
+    setVideoSrc(null);
+    setIsCameraActive(true);
+    clearZoom();
+    console.log("TIEMPO INICIAL", firstFrameTimeRef.current)
+    if (videoRef.current && (videoRef.current.srcObject || videoRef.current.src)) {
+      videoRef.current.play().catch(console.error);
+    }
+  };
+
+  useEffect(() => {
+  // Si acabamos de hacer resetPlaybackState, frameBuffer será [] y currentIndex === -1
+  if (currentIndex === -1 && frameBuffer.length === 0) {
+    firstFrameTimeRef.current = null;
+    console.log("[debug] firstFrameTimeRef reseteado luego de limpiar buffer");
+  }
+}, [frameBuffer, currentIndex]);
+
+  const handleStartRecording = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/start_recording/", {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error("Fallo en el backend");
+      }
+      setIsRecording(true);
+    } catch (error) {
+      console.error("Error al iniciar la grabación:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedId) return;
+    console.log(frameBuffer[currentIndex]?.detections);
+    const ids = (wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections)?.map(d => d.id.toString()) || [];
+    if (!ids.includes(selectedId)) {
+      message(`El ID ${selectedId} ya no está en el frame actual`, {
+      title: "Error de Zoom",
+    });
+      clearZoom();
+    }
+  }, [currentIndex, frameBuffer, detections, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !zoomConfig) return;
+
+    const deteccionesActuales = wasLiveRef.current
+      ? detections
+      : frameBuffer[currentIndex]?.detections;
+
+    const bbox = deteccionesActuales?.find(d => d.id.toString() === selectedId)?.bbox;
+
+    if (!bbox) return;
+
+    const [x1, y1, x2, y2] = bbox;
+    const centroX = x1 + (x2 - x1) / 2;
+    const centroY = y1 + (y2 - y1) / 2;
+
+    if (zoomConfig.x !== centroX || zoomConfig.y !== centroY) {
+      setZoomConfig((prev) => prev ? { ...prev, x: centroX, y: centroY } : null);
+    }
+  }, [detections, frameBuffer, currentIndex, selectedId, zoomConfig]);
+
+  useEffect(() => {
+  const sendTrackingConfig = async () => {
+    if (isTracking) {
+      console.warn("No se puede cambiar CPU/GPU mientras se está trackeando");
+      return;
+    }
+    const config = {
+      confidence: confidenceThreshold / 100,
+      gpu: processingUnit === "gpu",
+      fps: fpsLimit,
+    };
+
+    try {
+      while (!isFirstReady) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      await fetch("http://localhost:8000/config/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+    } catch (err) {
+      console.error("Error al enviar configuración:", err);
+    }
+  };
+
+  sendTrackingConfig();
+}, [processingUnit, confidenceThreshold, fpsLimit, isFirstReady, isTracking]);
+
+  const openLeftSidebar = () => {
+    setIsLeftSidebarOpen(true);
+    setIsRightSidebarOpen(false);
+  };
+
+  const openRightSidebar = () => {
+    setIsRightSidebarOpen(true);
+    setIsLeftSidebarOpen(false);
+  };
+
+  const elapsedSec =
+  currentIndex >= 0 &&
+  frameBuffer[currentIndex] &&
+  firstFrameTimeRef.current !== null
+    ? ((frameBuffer[currentIndex].time - firstFrameTimeRef.current) / 1000).toFixed(1)
+    : "0.0";
+
+  const directionColorMap: { [key: string]: string } = {
+    P: "hsl(0, 70%, 50%)",
+    D: "hsl(60, 70%, 50%)",
+    Q: "hsl(45, 70%, 50%)",
+    W: "hsl(90, 70%, 50%)",
+    E: "hsl(135, 70%, 50%)",
+    A: "hsl(180, 70%, 50%)",
+    Z: "hsl(225, 70%, 50%)",
+    S: "hsl(270, 70%, 50%)",
+    C: "hsl(315, 70%, 50%)",
+  };
+
+  const getColorForDirection = useCallback((direction: string): string => {
+    return directionColorMap[direction] || "hsl(0, 0%, 50%)";
+  }, []);
+
+  const construirTrayectoria = useCallback((idPersona: number) => {
+    return frameBuffer.reduce((puntos, frame, frameIndex) => {
+      if (frame.metrics?.tracking_data) {
+        const personData = frame.metrics.tracking_data.find(
+          (p: TrackingData) => p.id_persona === idPersona
+        );
+        if (personData?.centro) {
+          puntos.push({
+            x: personData.centro[0],
+            y: personData.centro[1],
+            frameIndex
+          });
+        }
+      }
+      return puntos;
+    }, [] as Array<{x: number, y: number, frameIndex: number}>);
+  }, [frameBuffer]);
+
+  const getGrupoDirection = useCallback((idGrupo: number, frameIndex: number): string => {
+    const frameMetrics = frameBuffer[frameIndex]?.metrics;
+    if (!frameMetrics?.groups || !frameMetrics?.directions) return "P";
+
+    const grupo = frameMetrics.groups.find((g: GroupBack) => g.id_grupo[0] === idGrupo);
+    if (!grupo || grupo.grupo_ids.length === 0) return "P";
+
+    const direcciones = grupo.grupo_ids
+      .map((id: number) => frameMetrics.directions[id.toString()]?.[0])
+      .filter(Boolean);
+
+    if (direcciones.length === 0) return "P";
+
+    const conteo: { [key: string]: number } = {};
+    direcciones.forEach((dir: string) => {
+      conteo[dir] = (conteo[dir] || 0) + 1;
+    });
+
+    return Object.keys(conteo).reduce((a, b) => 
+      conteo[a] > conteo[b] ? a : b, "P");
+  }, [frameBuffer]);
+
+  const construirTrayectoriaGrupo = useCallback((idGrupo: number): Array<{x: number, y: number, frameIndex: number}> => {
+    return frameBuffer.reduce((puntos, frame, frameIndex) => {
+      if (frame.metrics?.groups) {
+        const grupo = frame.metrics.groups.find((g: GroupBack) => g.id_grupo[0] === idGrupo);
+        if (grupo && grupo.grupo_ids.length > 0) {
+          const personas = frame.metrics.tracking_data.filter((p: TrackingData) =>
+            grupo.grupo_ids.includes(p.id_persona)
+          );
+          if (personas.length > 0) {
+            const centroX = personas.reduce((sum: number, p: TrackingData) => 
+              sum + p.centro[0], 0) / personas.length;
+            const centroY = personas.reduce((sum: number, p: TrackingData) => 
+              sum + p.centro[1], 0) / personas.length;
+            
+            puntos.push({ x: centroX, y: centroY, frameIndex });
+          }
+        }
+      }
+      return puntos;
+    }, [] as Array<{x: number, y: number, frameIndex: number}>);
+  }, [frameBuffer]);
+  
   useEffect(() => {
     if (!wasLiveRef.current || !isTracking) return;
     
-    // Actualizar trayectorias para IDs seleccionados
     setTrayectorias(prev => {
       const newMap = new Map(prev);
       idsSeleccionados.forEach(id => {
@@ -1105,7 +1046,6 @@ useEffect(() => {
       return newMap;
     });
 
-    // Actualizar trayectorias para grupos seleccionados
     setTrayectoriasGrupos(prev => {
       const newMap = new Map(prev);
       gruposSeleccionados.forEach(idGrupo => {
@@ -1114,55 +1054,57 @@ useEffect(() => {
       });
       return newMap;
     });
-  }, [frameBuffer, isTracking]); // Se activa con cada nuevo frame
+  }, [frameBuffer, isTracking, idsSeleccionados, gruposSeleccionados, construirTrayectoria, construirTrayectoriaGrupo]);
 
-  const getGrupoDirection = (idGrupo: number, frameIndex: number): string => {
-    const frameMetrics = frameBuffer[frameIndex]?.metrics;
-    if (!frameMetrics?.groups || !frameMetrics?.directions) return "P";
-
-    const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
-    if (!grupo || grupo.grupo_ids.length === 0) return "P";
-
-    // Obtener direcciones de los miembros
-    const direcciones = grupo.grupo_ids
-      .map((id: number) => frameMetrics.directions[id.toString()]?.[0])
-      .filter(Boolean);
-
-    if (direcciones.length === 0) return "P";
-
-    // Calcular moda (dirección más común)
-    const conteo: { [key: string]: number } = {};
-    direcciones.forEach((dir: string) => {
-      conteo[dir] = (conteo[dir] || 0) + 1;
-    });
-
-    return Object.keys(conteo).reduce((a, b) => 
-      conteo[a] > conteo[b] ? a : b, "P");
-  };
-
-  const construirTrayectoriaGrupo = (idGrupo: number): Array<{x: number, y: number, frameIndex: number}> => {
-    return frameBuffer.reduce((puntos, frame, frameIndex) => {
-      if (frame.metrics?.groups) {
-        const grupo = frame.metrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
-        if (grupo && grupo.grupo_ids.length > 0) {
-          const personas = frame.metrics.tracking_data.filter((p: any) =>
-            grupo.grupo_ids.includes(p.id_persona)
-          );
-          if (personas.length > 0) {
-            // Calcular centroide (promedio de centros)
-            const centroX = personas.reduce((sum: number, p: any) => 
-              sum + p.centro[0], 0) / personas.length;
-            const centroY = personas.reduce((sum: number, p: any) => 
-              sum + p.centro[1], 0) / personas.length;
-            
-            puntos.push({ x: centroX, y: centroY, frameIndex });
-          }
+  const toggleSeleccionId = useCallback((id: number) => {
+    setIdsSeleccionados(prev => {
+      const newIds = prev.includes(id)
+        ? prev.filter(i => i !== id)
+        : [...prev, id];
+      
+      setTrayectorias(prevTray => {
+        const newTray = new Map(prevTray);
+        if (newIds.includes(id)) {
+          newTray.set(id, construirTrayectoria(id));
+        } else {
+          newTray.delete(id);
         }
+        return newTray;
+      });
+      
+      return newIds;
+    });
+  }, [construirTrayectoria]);
+
+  const toggleSeleccionGrupo = useCallback((idGrupo: number) => {
+    setGruposSeleccionados((prev) => {
+      const isCurrentlySelected = prev.includes(idGrupo);
+      
+      if (isCurrentlySelected) {
+        setTrayectoriasGrupos(prevTray => {
+          const newTray = new Map(prevTray);
+          newTray.delete(idGrupo);
+          return newTray;
+        });
+        return prev.filter((i) => i !== idGrupo);
+      } else {
+        const nuevaTrayectoria = construirTrayectoriaGrupo(idGrupo);
+        setTrayectoriasGrupos(prevTray => {
+          const newTray = new Map(prevTray);
+          newTray.set(idGrupo, nuevaTrayectoria);
+          return newTray;
+        });
+        return [...prev, idGrupo];
       }
-      return puntos;
-    }, [] as Array<{x: number, y: number, frameIndex: number}>);
+    });
+  }, [construirTrayectoriaGrupo]);
+
+  const toggleSection = (section: string) => {
+    setActiveSection((prev) => (prev === section ? null : section));
+    setGrupoSeleccionado(null);
+    setIdsSeleccionados([]);
   };
-  
+
   return (
     <div className={styles.layoutContainer}>
       {isLeftSidebarOpen && (
@@ -1174,16 +1116,13 @@ useEffect(() => {
             {"<"}
           </button>
 
-              
-          
-          {/* Nueva sección Selección de Resolución */}
           <details className={styles.trackingDropdown}>
             <summary>Selección de Resolución</summary>
             <div className={styles.optionsContainer}>
               <select
                 value={selectedResolution}
                 onChange={(e) => handleResolutionChange(e)}
-                disabled={isTracking || isStopping} // Opcional: bloquear mientras está tracking
+                disabled={isTracking || isStopping}
                 className={styles.selectCamera}
               >
                 <option value="4k">3840 x 2160</option>
@@ -1220,10 +1159,12 @@ useEffect(() => {
                   </label>
                 </>
               )}
-              {(wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections)?.map(det => (
-                <button key={det.id} onClick={() => handleZoom(det.id)}>
-                  Zoom al ID {det.id}
-                </button>
+              {(wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections || []) // fallback
+                .filter(det => det && typeof det.id !== "undefined")
+                .map(det => (
+                  <button key={det.id} onClick={() => handleZoom(det.id)}>
+                    Zoom al ID {det.id}
+                  </button>
               ))}
             </div>
           </details>
@@ -1231,7 +1172,6 @@ useEffect(() => {
           <details className={styles.trackingDropdown}>
             <summary> Configuración tracking</summary>
             <div className={styles.optionsContainer}>
-              {/* Unidad de procesamiento */}
               {!isTracking && !isStopping && hasGPU === true && (
                 <div className={styles.trackingOption}>
                   <label>Unidad de procesamiento:</label>
@@ -1247,7 +1187,6 @@ useEffect(() => {
                 </div>
               )}
 
-              {/* FPS */}
               {!isTracking && !isStopping && (
                 <div className={styles.trackingOption}>
                   <label>FPS deseados:</label>
@@ -1262,7 +1201,6 @@ useEffect(() => {
                 </div>
               )}
 
-              {/* Porcentaje de confianza */}
               <div className={styles.trackingOption}>
                 <label>Porcentaje de confianza (%):</label>
                 <br />
@@ -1276,14 +1214,11 @@ useEffect(() => {
                   }
                 />
               </div>
-
-
             </div>
           </details>
         </div>
       )}
 
-      {/* Botón para expandir sidebar izquierda */}
       {!isLeftSidebarOpen && !isRightSidebarOpen && (
         <button
           onClick={openLeftSidebar}
@@ -1367,7 +1302,7 @@ useEffect(() => {
                   className={styles.selectCamera}
                   onChange={(e) => setSelectedDevice(e.target.value)}
                   value={selectedDevice}
-                  disabled={isStopping} // bloquea cuando estás esperando
+                  disabled={isStopping}
                 >
                   <option value="">-- Seleccionar cámara --</option>
                   {devices.map((d) => (
@@ -1404,8 +1339,6 @@ useEffect(() => {
                   ref={annotatedCanvasRef}
                   className={styles.videoElement}
                 />
-
-             
               </>
             ) : isCameraActive || isStreaming ? (
               <video
@@ -1421,33 +1354,32 @@ useEffect(() => {
             )}
           </div>
 
-            {/* Controles siempre visibles debajo del video */}
-            <div className={styles.bottomControls}>
+          <div className={styles.bottomControls}>
             <div style={{ marginTop: 10 }}>
               {isPlaying ? (
                 <span style={{ color: "#0af" }}>🎞️ Reproduciendo ({playbackSpeed}x)</span>
-              ) : wasLiveRef.current && isVideoEnded ? ( // Cambiado wasLiveRef por wasLiveRef.current
+              ) : wasLiveRef.current && isVideoEnded ? (
                 <span style={{ color: "yellow", fontWeight: "bold" }}> FIN De Video</span>
-              ) : wasLiveRef.current ? ( // Cambiado wasLiveRef por wasLiveRef.current
+              ) : wasLiveRef.current ? (
                 <span style={{ color: "red", fontWeight: "bold" }}>🔴 EN VIVO</span>
               ) : (
                 <span style={{ color: "#999" }}>⏸️ Pausado</span>
               )}
             </div>
-              <div className={styles.bottomControlsInner}>
-                <input
-                  type="range"
-                  min={0}
-                  max={Math.max(0, frameBuffer.length - 1)}
-                  value={currentIndex}
-                  onChange={e => {
-                    const v = Number(e.target.value);
-                    wasLiveRef.current = false;  // sales de live
-                    setIsPlaying(false);         // pausa cualquier playback actual
-                    setCurrentIndex(v);
-                  }}
-                  disabled={frameBuffer.length === 0}
-                />
+            <div className={styles.bottomControlsInner}>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, frameBuffer.length - 1)}
+                value={currentIndex}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  wasLiveRef.current = false;
+                  setIsPlaying(false);
+                  setCurrentIndex(v);
+                }}
+                disabled={frameBuffer.length === 0}
+              />
               <span>{elapsedSec} s</span>
               <label>
                 Velocidad:
@@ -1465,7 +1397,6 @@ useEffect(() => {
               <button
                 onClick={() => {
                   setIsPlaying(!isPlaying);
-                  // si arrancas a reproducir desde mid, asegúrate que no vuelvas a live antes
                   wasLiveRef.current = false;
                 }}
                 disabled={frameBuffer.length === 0}
@@ -1474,7 +1405,6 @@ useEffect(() => {
               </button>
               <button
                 onClick={() => {
-                  // Ir en vivo
                   wasLiveRef.current = true;
                   setIsPlaying(false);
                   const last = frameBuffer.length - 1;
@@ -1485,10 +1415,8 @@ useEffect(() => {
                 🔴 Live
               </button>
               {isVideoEnded && <div className={styles.notice}>🎉 El video terminó de analizarse</div>}
-              </div>
-              </div>
-
-          
+            </div>
+          </div>
 
           <input
             type="file"
@@ -1502,7 +1430,6 @@ useEffect(() => {
         </main>
       )}
 
-      {/* Sidebar derecho */}
       {isRightSidebarOpen && (
         <div className={styles.rightSidebar}>
           <button
@@ -1512,7 +1439,6 @@ useEffect(() => {
             {">"}
           </button>
           <div className={styles.rightSidebarContent}>
-            {/* Navegación de secciones */}
             <div className={styles.metricNavigation}>
               <button
                 onClick={() => toggleSection("generales")}
@@ -1534,13 +1460,11 @@ useEffect(() => {
               </button>
             </div>
 
-            {/* Contenido de la sección activa */}
             <div className={styles.metricMainContent}>
-              {/* Métricas generales */}
               {activeSection === "generales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data && frameBuffer[currentIndex].metrics.tracking_data.length > 0 ? (
                       <div className={styles.tableContainer}>
                         <table className={styles.tableMetricas}>
                           <thead>
@@ -1554,7 +1478,7 @@ useEffect(() => {
                             </tr>
                           </thead>
                           <tbody>
-                            {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((person: any, i: number) => (
+                            {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((person: TrackingData, i: number) => (
                               <tr key={`${frameBuffer[currentIndex]?.metrics?.frame_number}-${i}`}>
                                 <td>{person.id_persona}</td>
                                 <td>{frameBuffer[currentIndex]?.metrics?.frame_number}</td>
@@ -1576,30 +1500,27 @@ useEffect(() => {
                 </div>
               )}
 
-              {/* Métricas individuales */}
               {activeSection === "individuales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data && frameBuffer[currentIndex].metrics.tracking_data.length > 0 ? (
                       <div className={styles.individualMetricsGrid}>
-                        {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((personData: any) => {
-                          // Función para obtener el símbolo de dirección
+                        {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((personData: TrackingData) => {
                           const getDirectionSymbol = (directionCode: string) => {
                             const directionMap: { [key: string]: string } = {
-                              "P": "⏸️", // Stopped
-                              "D": "➡️", // East
-                              "Q": "↗️", // Northeast
-                              "W": "⬆️", // North
-                              "E": "↖️", // Northwest
-                              "A": "⬅️", // West
-                              "Z": "↙️", // Southwest
-                              "S": "⬇️", // South
-                              "C": "↘️"  // Southeast
+                              "P": "⏸️",
+                              "D": "➡️",
+                              "Q": "↗️",
+                              "W": "⬆️",
+                              "E": "↖️",
+                              "A": "⬅️",
+                              "Z": "↙️",
+                              "S": "⬇️",
+                              "C": "↘️"
                             };
                             return directionMap[directionCode] || "❓";
                           };
 
-                          // Obtener la dirección de la persona actual
                           const personDirection = frameBuffer[currentIndex]?.metrics?.directions?.[personData.id_persona.toString()];
                           const directionSymbol = personDirection ? getDirectionSymbol(personDirection[0]) : "❓";
 
@@ -1645,7 +1566,6 @@ useEffect(() => {
                       </div>
                     )}
                   </div>
-                  {/* Controles de trayectorias */}
                   <div className={styles.trajectoryControls}>
                     <div className={styles.controlRow}>
                       <label className={styles.checkboxLabel}>
@@ -1671,7 +1591,6 @@ useEffect(() => {
                     <div className={styles.activeTrajectories}>
                       <span>Trayectorias activas: </span>
                       {Array.from(trayectorias.keys()).map(id => {
-                        // Obtener la dirección del frame actual para esta persona
                         const direction = frameBuffer[currentIndex]?.metrics?.directions?.[id.toString()]?.[0] || "P";
                         return (
                           <span
@@ -1679,24 +1598,22 @@ useEffect(() => {
                             className={styles.trajectoryTag}
                             style={{ color: getColorForDirection(direction) }}
                           >
-                            ID {id} ({trayectorias.get(id)!.length} puntos) {/* se puede sacar*/}
+                            ID {id} ({trayectorias.get(id)!.length} puntos)
                           </span>
                         );
                       })}
                     </div>
                   )}
                   </div>
-
                 </div>
               )}
 
-              {/* Métricas grupales */}
               {activeSection === "grupales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.groups?.length > 0 ? (
+                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.groups && frameBuffer[currentIndex].metrics.groups.length > 0 ? (
                       <div className={styles.groupMetricsGrid}>
-                        {frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: any, index: number) => (
+                        {frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: GroupBack, index: number) => (
                           <div 
                             key={`grupo-${index}`}
                             className={`${styles.metricCard} ${grupoSeleccionado === index ? styles.selectedCard : ""}`}
@@ -1737,19 +1654,19 @@ useEffect(() => {
                                 <div className={styles.expandedGroupDetails}>
                                   {grupo.grupo_ids.map((personId: number) => {
                                     const personData = frameBuffer[currentIndex]?.metrics?.tracking_data?.find(
-                                      (p: any) => p.id_persona === personId
+                                      (p: TrackingData) => p.id_persona === personId
                                     );
                                     const getDirectionSymbol = (directionCode: string) => {
                                       const directionMap: { [key: string]: string } = {
-                                        "P": "⏸️", // Stopped
-                                        "D": "➡️", // East
-                                        "Q": "↗️", // Northeast
-                                        "W": "⬆️", // North
-                                        "E": "↖️", // Northwest
-                                        "A": "⬅️", // West
-                                        "Z": "↙️", // Southwest
-                                        "S": "⬇️", // South
-                                        "C": "↘️"  // Southeast
+                                        "P": "⏸️",
+                                        "D": "➡️",
+                                        "Q": "↗️",
+                                        "W": "⬆️",
+                                        "E": "↖️",
+                                        "A": "⬅️",
+                                        "Z": "↙️",
+                                        "S": "⬇️",
+                                        "C": "↘️"
                                       };
                                       return directionMap[directionCode] || "❓";
                                     };
@@ -1783,7 +1700,6 @@ useEffect(() => {
                       </div>
                     )}
                   </div>
-                  {/* Controles de trayectorias de grupos */}
                   <div className={styles.trajectoryControls}>
                     <div className={styles.controlRow}>
                       <label className={styles.checkboxLabel}>
@@ -1809,7 +1725,6 @@ useEffect(() => {
                       <div className={styles.activeTrajectories}>
                         <span>Trayectorias de grupos activas: </span>
                         {Array.from(trayectoriasGrupos.keys()).map(id => {
-                          // Obtener la dirección del grupo en el frame actual
                           const direction = getGrupoDirection(id, currentIndex);
                           return (
                             <span
@@ -1831,7 +1746,6 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Boton para expandir sidebar derecha */}
       {!isRightSidebarOpen && !isLeftSidebarOpen && (
         <button
           onClick={openRightSidebar}
@@ -1840,7 +1754,6 @@ useEffect(() => {
           {"< Metricas"} 
         </button>
       )}
-
     </div>
   );
 }

@@ -25,7 +25,6 @@ WizardSmallImageFile=imagenes\logo.bmp
 Source: "libs\{#MUSIC_DLL}"; Flags: dontcopy deleteafterinstall
 Source: "{#MUSIC_FILE}"; Flags: dontcopy deleteafterinstall
 
-
 ; — Ejecutables de la aplicación y servidor FastAPI
 Source: "src-tauri\target\release\app.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "src-tauri\target\release\fastapi_server.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -110,7 +109,8 @@ var
   Bytes: Int64;
 begin
   Result := True;
-
+  
+  
   // Extraer archivos necesarios
   ExtractTemporaryFile('{#MUSIC_FILE}');
   // Inicializar y reproducir música

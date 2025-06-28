@@ -9,8 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.5.0",
-    "@tauri-apps/plugin-dialog": "^2.2.2",
+    "@tauri-apps/api": "^2.6.0",
+    "@tauri-apps/plugin-dialog": "^2.3.0",
     "@tauri-apps/plugin-fs": "^2.3.0",
     "@tauri-apps/plugin-http": "^2.4.4",
     "next": "15.3.1",

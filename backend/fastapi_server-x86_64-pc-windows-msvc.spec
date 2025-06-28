@@ -4,7 +4,7 @@
 a = Analysis(
     ['server.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('streamlink.exe', '.'), ('ffmpeg.exe', '.')],
     datas=[('..\\\\tracker', 'tracker')],
     hiddenimports=[],
     hookspath=[],

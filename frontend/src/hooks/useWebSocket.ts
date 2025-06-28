@@ -57,6 +57,9 @@ export function useWebSocket({ url, onMessage, onStopped}: UseWebSocketOptions) 
       console.log("🔒 WebSocket cerrado");
       setIsConnected(false);
       setIsReady(false);
+      message("Se cerro el webSocket.", {
+        title: "Fin Tracking",
+      });
       onStopped?.();         // — y también aquí
 
     };

@@ -271,6 +271,7 @@ export default function DashboardPage() {
       clearZoom();
       setIsVideoEnded(false);
       resetIds();
+      
     },
   });
 
@@ -729,7 +730,7 @@ useEffect(() => {
     const url = prompt("Ingresa la URL del Streaming:");
     if (!url) return;
     try {
-      const response = await fetch("http://localhost:8000/upload-url", {
+      const response = await fetch("http://localhost:8000/upload-url/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

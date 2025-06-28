@@ -1,5 +1,5 @@
 #define MyAppName    "Followup"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define CUDA_URL "https://developer.download.nvidia.com/compute/cuda/12.9.0/network_installers/cuda_12.9.0_windows_network.exe"
 #define CUDA_TMPNAME "cuda_installer.exe"
 #define MUSIC_DLL    "MediaPlayer.dll"
@@ -32,7 +32,6 @@ Source: "src-tauri\target\release\fastapi_server.exe"; DestDir: "{app}"; Flags: 
 ; — Tracker y modelo YOLO
 Source: "..\tracker\*"; DestDir: "{app}\tracker"; Flags: recursesubdirs createallsubdirs
 Source: "..\yolov8n.pt"; DestDir: "{app}\tracker"; Flags: ignoreversion
-
 
 
 [Code]

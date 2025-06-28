@@ -14,19 +14,20 @@ import torch
 import json
 import math
 from datetime import datetime
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks
 from collections import defaultdict, deque
 from typing import List, Dict, Optional, Any  # Importa Optional y Any
 import base64
 import time
+
 # 1) Detecta si está bundlado o en desarrollo
 if getattr(sys, 'frozen', False):
     base_dir = sys._MEIPASS
 else:
     # Asume que este archivo está en backend/, sube un nivel
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-
 
 # 2) Inserta la carpeta padre en sys.path (PeopleTracking/)
 sys.path.insert(0, base_dir)
@@ -85,26 +86,44 @@ app.add_middleware(
 # ---------------------------------------------------
 # 8) Estado compartido
 # ---------------------------------------------------
+current_id = None
 config_state = {"confidence_threshold": 0.5, "gpu": True, "fps": fps_default, "resolution": (1920, 1080)}
 
 class IDPayload(BaseModel):
     id: int
-
-class Metrics(BaseModel):
-    frame_number: int
-    total_tracked: int
-    tracking_data: List[Dict[str, Any]]  # Usa Any en lugar de any
-    directions: Dict[int, List[str]]
-    groups: List[Dict[str, List[int]]]
-
-    class Config:
-        arbitrary_types_allowed = True
 
 class ConfigPayload(BaseModel):
     confidence: float = 0.5
     gpu: bool = False
     fps: int = fps_default
     resolution: Optional[str] = None  # Propiedad para la resolución
+
+class Metrics(BaseModel):
+    frame_number: int
+    total_tracked: int
+    tracking_data: List[Dict[str, any]]  # Datos generales (track_id, centro, bbox)
+    directions: Dict[int, List[str]]  # ID de persona -> direcciones
+    groups: List[Dict[str, List[int]]]  # ID de grupo y miembros
+
+    class Config:
+        arbitrary_types_allowed = True
+
+# ---------------------------------------------------
+# 9) Utilidad de zoom (opcional)
+# ---------------------------------------------------
+def apply_zoom(frame, center, zoom_factor=1.5):
+    if center is None or current_id is None:
+        return frame
+    x, y = center
+    h, w = frame.shape[:2]
+    new_w, new_h = int(w / zoom_factor), int(h / zoom_factor)
+    x1 = max(0, x - new_w // 2); y1 = max(0, y - new_h // 2)
+    x2 = min(w, x + new_w // 2); y2 = min(h, y + new_h // 2)
+    crop = frame[y1:y2, x1:x2]
+    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+
 
 
 # ---------------------------------------------------
@@ -378,21 +397,16 @@ async def analyze(ws: WebSocket):
     await ws.accept()
     await ws.send_json({"type": "ready", "status": True})
 
-    # Variables de control
-    video_writer = None
-    global video_url, stream_url, is_recording, recording_ready
-    cap = None
-    frame_number = 1
-
-    MAX_FAILS = 10
-    fail_count = 0
-
     try:
+        video_writer = None
+        global current_id, video_url, stream_url, is_recording, recording_ready
+        cap = None
+        frame_number = 1
 
         while True:
             frame = None
 
-             # ─── Si es un stream de video remoto ───
+            ## parte agarrar video
             if stream_url and video_url:
                 if cap is None:
                     cap = cv2.VideoCapture(video_url)
@@ -401,38 +415,11 @@ async def analyze(ws: WebSocket):
                         print("❌ No se pudo abrir el stream")
                         break
 
-                  # ─── envolvemos cap.read() en try/except ───
-                try:
-                    ret, frame = cap.read()
-                except Exception as e:
-                    fail_count += 1
-                    print(f"⚠️ Exception leyendo frame #{fail_count}: {e}")
-                    if fail_count >= MAX_FAILS:
-                        await ws.send_json({
-                            "type": "error",
-                            "message": f"Stream interrumpido tras {MAX_FAILS} reintentos por excepción"
-                        })
-                        print(f"❌ Demasiadas excepciones ({fail_count}), cerrando stream")
-                        break
-                    await asyncio.sleep(0.1)
-                    continue
-
-                # ─── si no hubo excepción, procesamos ret como antes ───
+                ret, frame = cap.read()
                 if not ret:
-                    fail_count += 1
-                    print(f"⚠️ Fallo de lectura #{fail_count}")
-                    if fail_count >= MAX_FAILS:
-                        await ws.send_json({
-                            "type": "error",
-                            "message": f"Stream interrumpido tras {MAX_FAILS} reintentos"
-                        })
-                        print(f"❌ Demasios fallos de lectura ({fail_count}), cerrando stream")
-                        break
+                    print("❌ No se pudo leer el frame del stream")
                     await asyncio.sleep(0.1)
                     continue
-
-                # lectura satisfactoria: resetear contador
-                fail_count = 0
             else:
                 message = await ws.receive()
 
@@ -457,8 +444,6 @@ async def analyze(ws: WebSocket):
                         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                         if frame is None:
                             continue
-                # siempre reseteamos fail_count en caso de que acabáramos de recibir datos válidos
-                fail_count = 0
 
             if frame is None:
                 continue
@@ -469,7 +454,7 @@ async def analyze(ws: WebSocket):
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
-                    executor, get_predict, frame
+                    executor, get_predict, frame, current_id
                 )
             except Exception as e:
                 print("❌ Error en get_predict:", e)
@@ -486,9 +471,18 @@ async def analyze(ws: WebSocket):
                 frame_number = 1
                 print("💾 Grabación finalizada sin detener el tracking.")
 
+            if center:
+                annotated = apply_zoom(annotated, center)
+
+            await ws.send_json({
+                "type": "lista_de_ids",
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "selected_id": current_id
+            })
 
             addTrackingGenericMetrics(frame_number, tracks)
             detect_directions(frame_number, tracks)
+            #print(f"ultima direccion de todas las personas: {direction_strings}")
 
             # 🔹 Detectar grupos en el frame actual
             grupos_actuales = getGroupsRealTime(
@@ -496,6 +490,13 @@ async def analyze(ws: WebSocket):
                 angle_threshold=angle_diff_threshold,
                 frame_number=frame_number  # Pasar el número de frame actual
             )
+            if grupos_actuales:
+                print(f"🟢 Grupos detectados en frame {frame_number}:")
+                for grupo in grupos_actuales:
+                    print(f"   Grupo {grupo['id_grupo']}: {grupo['grupo_ids']}")
+                print(f"📊 Historial de grupos: {dict(grupos_historicos)}")
+            else:
+                print(f"🔹 Sin grupos detectados en frame {frame_number}")
 
             metrics = Metrics(
                 frame_number=frame_number,
@@ -516,7 +517,15 @@ async def analyze(ws: WebSocket):
                 directions={person: direction_strings[person] for person in direction_strings},
                 groups=grupos_actuales
             )
+            print(f"METRICAS: \n{metrics}\n\n")
 
+            # Enviar datos y métricas al frontend
+            await ws.send_json({
+                "type": "metrics_and_detections",
+                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "metrics": metrics.model_dump(),
+                "selected_id": current_id
+            })
 
             frame_number += 1
 
@@ -526,6 +535,7 @@ async def analyze(ws: WebSocket):
                 "frame_number": frame_number,
                 "metrics": metrics.model_dump(),
                 "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
+                "selected_id": current_id,
                 "image": base64.b64encode(buf.tobytes()).decode(),
                 "timestamp": time.time() * 1000  # timestamp en milisegundos
             }
@@ -535,10 +545,9 @@ async def analyze(ws: WebSocket):
                 await asyncio.sleep(0.03)
 
     except WebSocketDisconnect:
-        print("Cliente desconectado (exception)")
+        print("Cliente desconectado")
     except Exception:
         import traceback; traceback.print_exc()
-        print("❌ Excepción inesperada:", e)
     finally:
         try:
             await ws.send_json({"type": "stopped"})
@@ -546,27 +555,31 @@ async def analyze(ws: WebSocket):
         except:
             pass
         print("🛑 Handler WebSocket terminado.")
-        if stream_url:
-            stream_url=None
-        if video_url:
-            video_url=None
         if cap:
             cap.release()
-        if video_writer:
-            video_writer.release()
-            recording_ready = True
-            video_writer = None
-            frame_number = 1
-            print("💾 Grabación finalizada sin detener el tracking.")
 # ---------------------------------------------------
 # 11) Endpoints REST para control
 # ---------------------------------------------------
 @app.post("/reset_model/")
 async def reset_model(request: Request):
+    global current_id
+    current_id = None
     reset()
     reset_groups()
     return {"status": "model reset"}
 
+@app.post("/set_id/")
+async def set_id(payload: IDPayload):
+    global current_id
+    current_id = payload.id
+    return {"status": "id updated"}
+
+@app.post("/clear_id/")
+async def clear_id():
+    global current_id
+    current_id = None
+    reset_groups()
+    return {"status": "id cleared"}
 
 @app.post("/config/")
 async def update_config(payload: ConfigPayload):
@@ -610,7 +623,6 @@ async def update_config(payload: ConfigPayload):
 
     print(f"[CONFIG] {config_state}")
     return {"status": "ok", "new_state": config_state}
-
 @app.get("/hardware_status/")
 async def get_hardware_status():
     return hardware_status
@@ -665,9 +677,9 @@ video_url = None  # Aquí guardaremos la URL real del stream de YouTube
 
 def get_youtube_stream_url(youtube_link, max_height=None):
     ydl_opts = {
-        "quiet": True,
-        "noplaylist": True,
-        "skip_download": True,
+        'quiet': True,
+        'noplaylist': True,
+        'skip_download': True,
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(youtube_link, download=False)
@@ -708,7 +720,7 @@ async def upload_url(request: Request):
     stream_url = bool(data.get("stream_url"))  # por si viene como string
     url = data.get("imageUrl")
     resolution = data.get("resolution")
-    print(resolution)
+
     if stream_url and url:
         try:
             max_height = None

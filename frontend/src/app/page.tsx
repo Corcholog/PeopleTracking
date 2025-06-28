@@ -130,6 +130,10 @@ export default function DashboardPage() {
   const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
   const [mostrarTrayectorias, setMostrarTrayectorias] = useState(true);
 
+  //estados para el zoom
+  const [zoomConfig, setZoomConfig] = useState<{ x: number; y: number; scale: number } | null>(null);
+
+
   // 1) Define un estado para el live frame:
   const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
 
@@ -190,14 +194,6 @@ export default function DashboardPage() {
     // 4. Establecemos maxBuffer
     setMaxBuffer(safeFrames);
 
-    console.log(
-      `▶️ resolutionStreaming=${resolutionStreaming}, avgBlob≈${avgBlobKB}KB/frame\n` +
-      `   reportedRAM≈${reportedGB}GB → budget=${budgetMB.toFixed(1)}MB → ` +
-      `frames(teórico)=${theoreticalFrames}` +
-      (perf && perf.usedJSHeapSize
-        ? `, heapLibre=${((perf.jsHeapSizeLimit - perf.usedJSHeapSize)/1024/1024).toFixed(1)}MB → safeFrames=${safeFrames}`
-        : "")
-    );
   }, [resolutionStreaming]);
 
   const registerFrameTime = (time: number) => {
@@ -223,6 +219,7 @@ export default function DashboardPage() {
     setGrupoSeleccionado(null);
     setTrayectorias(new Map());
   };
+
 
   useEffect(() => {
     const checkBackendReady = async () => {
@@ -258,8 +255,6 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
           setDetections(msg.detections);
           setMetrics(msg.metrics);
           
-          if (msg.selected_id == null) setSelectedId("");
-
           if (msg.metrics?.groups) {
             const grupos = msg.metrics.groups.map((g: any) => ({
               id_grupo: g.id_grupo[0],
@@ -325,10 +320,6 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
           }, "image/jpeg", 0.7);
         }
 
-        // Manejar el mensaje existente "lista_de_ids" 
-        if (msg.type === "lista_de_ids") {
-          if (msg.selected_id == null) setSelectedId("");
-        }
       }
     },
     onStopped: () => {
@@ -343,8 +334,8 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
       // Limpiar también las métricas temporales
       setLatestMetrics(null);
       setLatestDetections([]);
-      resetFirstFrameTime();
       resetPlaybackState();
+      clearZoom();
       setIsVideoEnded(false);
     },
   });
@@ -383,7 +374,12 @@ useEffect(() => {
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
       // dibuja
-      ctx.drawImage(bitmap, 0, 0);
+      const bbox = frame.detections?.find(d => d.id.toString() === selectedId)?.bbox;
+      if (zoomConfig && bbox) {
+        applyZoom(ctx, bitmap, zoomConfig, bbox);
+      } else {
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      }
 
       dibujarTrayectorias(canvas);
 
@@ -400,7 +396,7 @@ useEffect(() => {
   };
 }, [currentIndex, frameBuffer, trayectorias, trayectoriasGrupos]);
 
-// Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte:
+// Añade esto para que en cuanto cambie liveFrame, si estamos en live, se pinte: se agrego lo del zoom
 useEffect(() => {
   if (!liveFrame) return;
   if (!wasLiveRef.current) return;
@@ -409,15 +405,17 @@ useEffect(() => {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-
-  const [w, h] = resolutionStreaming.split("x").map(Number);
-  canvas.width = w;
-  canvas.height = h;
-
-  ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
-
-  dibujarTrayectorias(canvas);
-}, [liveFrame, resolutionStreaming, wasLiveRef.current]);
+  createImageBitmap(liveFrame.bitmap).then(bitmap => {
+  const bbox = detections.find(d => d.id.toString() === selectedId)?.bbox;
+  if (zoomConfig && bbox) {
+    applyZoom(ctx, bitmap, zoomConfig, bbox);
+  } else {
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  }
+    dibujarTrayectorias(canvas);
+    bitmap.close?.();
+  });
+}, [liveFrame, resolutionStreaming, zoomConfig]);
 
 useEffect(() => {
   if (!isPlaying) return;
@@ -519,7 +517,6 @@ useEffect(() => {
       const videoEl = videoRef.current!;
 
       if (videoEl.ended || videoEl.paused) {
-        console.log("🛑 Video finalizado o pausado, deteniendo envío");
         clearInterval(intervalId);
         setIsVideoEnded(true);     // opcional
         return;
@@ -566,7 +563,7 @@ useEffect(() => {
       if (fileInputRef.current) {
         fileInputRef.current.value = ""; // Clear file input
       }
-      resetId();
+      clearZoom();
     }
   };
 
@@ -628,10 +625,11 @@ useEffect(() => {
       setVideoSrc(null);
       setIsCameraActive(false);
       setSelectedDevice("");
-      setSelectedId("");
       setStream(false);
 
     }
+    clearZoom();
+    resetPlaybackState();
     setIsVideoEnded(false);
     setDetections([]);
     setIsTracking(false);
@@ -684,7 +682,6 @@ const downloadRecording = async () => {
     if (newRes === "2k") newRes = "2560x1440";
 
     setSelectedResolution(newRes);
-    console.log("entro al handle video change", newRes);
 
   };
 
@@ -696,6 +693,7 @@ const downloadRecording = async () => {
     resetFirstFrameTime();
     setVideoSrc(null);
     setIsCameraActive(true);
+    clearZoom();
     if (
       videoRef.current &&
       (videoRef.current.srcObject || videoRef.current.src)
@@ -718,28 +716,97 @@ const downloadRecording = async () => {
     }
   };
 
-  const handleZoom = async (id: number) => {
-    setSelectedId(id.toString());
-    try {
-      await fetch("http://localhost:8000/set_id/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id }),
-      });
-    } catch (error) {
-      console.error("Error al enviar ID al backend:", error);
-    }
-  };
+  //funciones zoom
 
-  const resetId = async () => {
-    setSelectedId("");
-    await fetch("http://localhost:8000/clear_id/", {
-      method: "POST",
-    });
-    setSelectedId("");
-  };
+  //ver si un id no esta mas.
+useEffect(() => {
+  if (!selectedId) return;
+  const ids = (wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections)?.map(d => d.id.toString()) || [];
+  if (!ids.includes(selectedId)) {
+    alert(`El ID ${selectedId} ya no aparece en este frame`);
+    clearZoom();
+  }
+}, [currentIndex, frameBuffer, detections, selectedId]);
+//actualizar el centro en cada diferente frame
+useEffect(() => {
+  if (!selectedId || !zoomConfig) return;
+
+  const deteccionesActuales = wasLiveRef.current
+    ? detections
+    : frameBuffer[currentIndex]?.detections;
+
+  const bbox = deteccionesActuales?.find(d => d.id.toString() === selectedId)?.bbox;
+
+  if (!bbox) return;
+
+  const [x1, y1, x2, y2] = bbox;
+  const centroX = x1 + (x2 - x1) / 2;
+  const centroY = y1 + (y2 - y1) / 2;
+
+  // Solo actualizamos si cambia el centro (dejamos la escala fija)
+  if (zoomConfig.x !== centroX || zoomConfig.y !== centroY) {
+    setZoomConfig((prev) => prev ? { ...prev, x: centroX, y: centroY } : null);
+  }
+}, [detections, frameBuffer, currentIndex, selectedId]);
+
+
+  function applyZoom(
+  ctx: CanvasRenderingContext2D,
+  img: ImageBitmap,
+  cfg: { x: number; y: number; scale: number },
+  bbox?: number[]
+) {
+  const { x, y, scale } = cfg;
+  const sw = img.width / scale;
+  const sh = img.height / scale;
+
+  // Recorte
+  const sx = Math.max(0, Math.min(img.width - sw, x - sw / 2));
+  const sy = Math.max(0, Math.min(img.height - sh, y - sh / 2));
+
+  // Dibujo del zoom
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  // Opcional: dibujar bbox dentro del canvas
+  if (bbox) {
+    const [bx1, by1, bx2, by2] = bbox;
+
+    // bbox proyectado a canvas:
+    const scaleX = ctx.canvas.width / sw;
+    const scaleY = ctx.canvas.height / sh;
+    const canvasX = (bx1 - sx) * scaleX;
+    const canvasY = (by1 - sy) * scaleY;
+    const canvasW = (bx2 - bx1) * scaleX;
+    const canvasH = (by2 - by1) * scaleY;
+
+    ctx.strokeStyle = "yellow";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(canvasX, canvasY, canvasW, canvasH);
+  }
+}
+
+
+
+  const handleZoom = (id: number) => {
+  const det = detections.find(d => d.id === id);
+  if (!det) {
+    // avisito si ya no está
+    alert(`El ID ${id} ya no está en el frame actual`);
+    setZoomConfig(null);
+    return;
+  }
+  setSelectedId(id.toString());
+  setZoomConfig({ x: det.bbox[0] + (det.bbox[2]-det.bbox[0])/2,
+                  y: det.bbox[1] + (det.bbox[3]-det.bbox[1])/2,
+                  scale: 2 });
+};
+
+  const clearZoom = () => {
+  setSelectedId("");
+  setZoomConfig(null);
+};
+
   
   useEffect(() => {
     const sendTrackingConfig = async () => {
@@ -1134,18 +1201,30 @@ const downloadRecording = async () => {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {!isStopping && selectedId !== "" && (
-                <button onClick={resetId}>Quitar Zoom</button>
-              )}
-              {!isStopping && (
+              {selectedId && (
                 <>
-                  {detections.map((det) => (
-                    <button key={det.id} onClick={() => handleZoom(det.id)}>
-                      Zoom al ID {det.id}
-                    </button>
-                  ))}
+                  <button onClick={clearZoom}>Quitar Zoom</button>
+                  <label>
+                    Zoom: {zoomConfig?.scale.toFixed(1)}×
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={0.1}
+                      value={zoomConfig?.scale || 1}
+                      onChange={(e) => {
+                        const scale = parseFloat(e.target.value);
+                        setZoomConfig((cfg) => cfg ? { ...cfg, scale } : null);
+                      }}
+                    />
+                  </label>
                 </>
               )}
+              {(wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections)?.map(det => (
+                <button key={det.id} onClick={() => handleZoom(det.id)}>
+                  Zoom al ID {det.id}
+                </button>
+              ))}
             </div>
           </details>
 
@@ -1461,7 +1540,7 @@ const downloadRecording = async () => {
               {activeSection === "generales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
                       <div className={styles.tableContainer}>
                         <table className={styles.tableMetricas}>
                           <thead>

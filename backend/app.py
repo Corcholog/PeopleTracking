@@ -87,7 +87,6 @@ app.add_middleware(
 # ---------------------------------------------------
 # 8) Estado compartido
 # ---------------------------------------------------
-current_id = None
 config_state = {"confidence_threshold": 0.5, "gpu": True, "fps": fps_default, "resolution": (1920, 1080)}
 
 class IDPayload(BaseModel):
@@ -108,19 +107,7 @@ class Metrics(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-# ---------------------------------------------------
-# 9) Utilidad de zoom (opcional)
-# ---------------------------------------------------
-def apply_zoom(frame, center, zoom_factor=1.5):
-    if center is None or current_id is None:
-        return frame
-    x, y = center
-    h, w = frame.shape[:2]
-    new_w, new_h = int(w / zoom_factor), int(h / zoom_factor)
-    x1 = max(0, x - new_w // 2); y1 = max(0, y - new_h // 2)
-    x2 = min(w, x + new_w // 2); y2 = min(h, y + new_h // 2)
-    crop = frame[y1:y2, x1:x2]
-    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
+
 
 
 
@@ -399,7 +386,7 @@ async def analyze(ws: WebSocket):
 
     try:
         video_writer = None
-        global current_id, video_url, stream_url, is_recording, recording_ready
+        global video_url, stream_url, is_recording, recording_ready
         cap = None
         frame_number = 1
 
@@ -454,7 +441,7 @@ async def analyze(ws: WebSocket):
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
-                    executor, get_predict, frame, current_id
+                    executor, get_predict, frame
                 )
             except Exception as e:
                 print("❌ Error en get_predict:", e)
@@ -471,18 +458,9 @@ async def analyze(ws: WebSocket):
                 frame_number = 1
                 print("💾 Grabación finalizada sin detener el tracking.")
 
-            if center:
-                annotated = apply_zoom(annotated, center)
-
-            await ws.send_json({
-                "type": "lista_de_ids",
-                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "selected_id": current_id
-            })
 
             addTrackingGenericMetrics(frame_number, tracks)
             detect_directions(frame_number, tracks)
-            #print(f"ultima direccion de todas las personas: {direction_strings}")
 
             # 🔹 Detectar grupos en el frame actual
             grupos_actuales = getGroupsRealTime(
@@ -490,13 +468,6 @@ async def analyze(ws: WebSocket):
                 angle_threshold=angle_diff_threshold,
                 frame_number=frame_number  # Pasar el número de frame actual
             )
-            if grupos_actuales:
-                print(f"🟢 Grupos detectados en frame {frame_number}:")
-                for grupo in grupos_actuales:
-                    print(f"   Grupo {grupo['id_grupo']}: {grupo['grupo_ids']}")
-                print(f"📊 Historial de grupos: {dict(grupos_historicos)}")
-            else:
-                print(f"🔹 Sin grupos detectados en frame {frame_number}")
 
             metrics = Metrics(
                 frame_number=frame_number,
@@ -517,15 +488,7 @@ async def analyze(ws: WebSocket):
                 directions={person: direction_strings[person] for person in direction_strings},
                 groups=grupos_actuales
             )
-            print(f"METRICAS: \n{metrics}\n\n")
 
-            # Enviar datos y métricas al frontend
-            await ws.send_json({
-                "type": "metrics_and_detections",
-                "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "metrics": metrics.model_dump(),
-                "selected_id": current_id
-            })
 
             frame_number += 1
 
@@ -535,7 +498,6 @@ async def analyze(ws: WebSocket):
                 "frame_number": frame_number,
                 "metrics": metrics.model_dump(),
                 "detections": [{"id": t.track_id, "bbox": t.bbox} for t in tracks],
-                "selected_id": current_id,
                 "image": base64.b64encode(buf.tobytes()).decode(),
                 "timestamp": time.time() * 1000  # timestamp en milisegundos
             }
@@ -562,24 +524,10 @@ async def analyze(ws: WebSocket):
 # ---------------------------------------------------
 @app.post("/reset_model/")
 async def reset_model(request: Request):
-    global current_id
-    current_id = None
     reset()
     reset_groups()
     return {"status": "model reset"}
 
-@app.post("/set_id/")
-async def set_id(payload: IDPayload):
-    global current_id
-    current_id = payload.id
-    return {"status": "id updated"}
-
-@app.post("/clear_id/")
-async def clear_id():
-    global current_id
-    current_id = None
-    reset_groups()
-    return {"status": "id cleared"}
 
 @app.post("/config/")
 async def update_config(payload: ConfigPayload):

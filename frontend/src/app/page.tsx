@@ -847,66 +847,34 @@ const applyZoom = useCallback((
   }, [detections, frameBuffer, currentIndex, selectedId, zoomConfig]);
 
   useEffect(() => {
-    const sendTrackingConfig = async () => {
-      if (isTracking) {
-        console.warn("No se puede cambiar CPU/GPU mientras se está trackeando");
-        return;
-      }
-      const config = {
-        confidence: confidenceThreshold / 100,
-        gpu: processingUnit === "gpu",
-        fps: fpsLimit,
-      };
-
-      try {
-        // Esperar hasta que isFirstReady sea true
-        while (!isFirstReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100)); // espera 100ms
-        }
-
-        // Una vez que isFirstReady es true, se envía la configuración
-        await fetch("http://localhost:8000/config/", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(config),
-        });
-
-      } catch (err) {
-        console.error("Error al enviar configuración:", err);
-      }
+  const sendTrackingConfig = async () => {
+    if (isTracking) {
+      console.warn("No se puede cambiar CPU/GPU mientras se está trackeando");
+      return;
+    }
+    const config = {
+      confidence: confidenceThreshold / 100,
+      gpu: processingUnit === "gpu",
+      fps: fpsLimit,
     };
 
-    sendTrackingConfig();
-  }, [processingUnit, confidenceThreshold]);
-
-  // Cambio de FPSs
-  useEffect(() => {
-    const updateFpsSetting = async () => {
-      if (isTracking) {
-        console.warn("No se puede cambiar FPS mientras se está trackeando");
-        return;
+    try {
+      while (!isFirstReady) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      await fetch("http://localhost:8000/config/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+    } catch (err) {
+      console.error("Error al enviar configuración:", err);
+    }
+  };
 
-      try {
-        while (!isFirstReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100)); // espera 100ms
-        }
-        await fetch("http://localhost:8000/config/", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ fps: fpsLimit }),
-        });
-      } catch (err) {
-        console.error("Error al actualizar FPS:", err);
-      }
-    };
+  sendTrackingConfig();
+}, [processingUnit, confidenceThreshold, fpsLimit, isFirstReady, isTracking]);
 
-    updateFpsSetting();
-  }, [fpsLimit]);
 
   // funciones para manejar las barras laterales
   const openLeftSidebar = () => {
@@ -1311,6 +1279,7 @@ const applyZoom = useCallback((
                   min="0"
                   max="100"
                   value={confidenceThreshold}
+                  disabled={isTracking || isStopping}
                   onChange={(e) =>
                     setConfidenceThreshold(Number(e.target.value))
                   }
@@ -1466,8 +1435,6 @@ const applyZoom = useCallback((
             <div style={{ marginTop: 10 }}>
               {isPlaying ? (
                 <span style={{ color: "#0af" }}>🎞️ Reproduciendo ({playbackSpeed}x)</span>
-              ) : wasLiveRef.current && isVideoEnded ? ( // Cambiado wasLiveRef por wasLiveRef.current
-                <span style={{ color: "yellow", fontWeight: "bold" }}> FIN De Video</span>
               ) : wasLiveRef.current ? ( // Cambiado wasLiveRef por wasLiveRef.current
                 <span style={{ color: "red", fontWeight: "bold" }}>🔴 EN VIVO</span>
               ) : (
@@ -1524,7 +1491,6 @@ const applyZoom = useCallback((
               >
                 🔴 Live
               </button>
-              {isVideoEnded && <div className={styles.notice}>🎉 El video terminó de analizarse</div>}
               </div>
               </div>
 

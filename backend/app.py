@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks
 from collections import defaultdict, deque
-from typing import List, Dict
+from typing import List, Dict, Optional
 import base64
 import time
 
@@ -97,6 +97,7 @@ class ConfigPayload(BaseModel):
     confidence: float = 0.5
     gpu: bool = False
     fps: int = fps_default
+    resolution: Optional[str] = None  # Propiedad para la resolución
 
 class Metrics(BaseModel):
     frame_number: int
@@ -604,9 +605,10 @@ async def update_config(payload: ConfigPayload):
     if payload.fps is not None:
         config_state["fps"] = payload.fps
         print(f"[CONFIG] FPS set to: {payload.fps}")
-    if payload.res is not None:
+    # Resolution configuration - FIXED HERE
+    if payload.resolution is not None:  # Changed from payload.res
         try:
-            width, height = map(int, payload.res.split("x"))
+            width, height = map(int, payload.resolution.split("x"))
             if width > 0 and height > 0:
                 config_state["resolution"] = (width, height)
                 print(f"[CONFIG] Resolution set to: {width}x{height}")
@@ -615,6 +617,7 @@ async def update_config(payload: ConfigPayload):
         except Exception as e:
             print(f"[CONFIG] Error setting resolution: {e}")
             return JSONResponse(status_code=400, content={"error": "Invalid resolution format"})
+
     print(f"[CONFIG] {config_state}")
     return {"status": "ok", "new_state": config_state}
 

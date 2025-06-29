@@ -21,7 +21,8 @@
               "dialog:allow-open",
               "dialog:allow-save",
               "fs:default",
-              "fs:allow-download-write-recursive"
+              "fs:allow-download-write-recursive",
+              "dialog:allow-message"
             ]
         }
       ]

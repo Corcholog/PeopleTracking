@@ -1,12 +1,46 @@
 "use client";
 import { useWebSocket } from "@/hooks/useWebSocket"; // ajustá path según tu estructura
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback  } from "react";
 import styles from "./page.module.css";
-//import { save } from '@tauri-apps/plugin-dialog';
-//import { writeFile  } from '@tauri-apps/plugin-fs';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile  } from '@tauri-apps/plugin-fs';
+import { message } from "@tauri-apps/plugin-dialog";
 
 
 export default function DashboardPage() {
+  interface NavigatorWithMemory extends Navigator {
+    deviceMemory?: number;
+  }
+
+  interface PerformanceMemory {
+    usedJSHeapSize: number;
+    totalJSHeapSize: number;
+    jsHeapSizeLimit: number;
+  }
+
+  interface TrackingData {
+    id_persona: number;
+    centro: [number, number];
+    bbox: [number, number, number, number];
+  }
+  
+  interface GroupBack {
+    id_grupo: number[];
+    grupo_ids: number[];
+  }
+
+  //interfaces
+  interface Metrics {
+    frame_number: number;
+    total_tracked: number;
+    tracking_data: TrackingData[];
+    directions: Record<string, string[]>;
+    groups?: GroupBack[];
+  }
+
+  
+
+
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
@@ -15,6 +49,7 @@ export default function DashboardPage() {
   const [processingUnit, setProcessingUnit] = useState("gpu");
   const [fpsLimit, setFpsLimit] = useState(24);
   const [confidenceThreshold, setConfidenceThreshold] = useState(50);
+  const [zoomConfig, setZoomConfig] = useState<{ x: number; y: number; scale: number } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -33,11 +68,11 @@ export default function DashboardPage() {
 
   const [isRecording, setIsRecording] = useState(false);
 
-  const [metrics, setMetrics] = useState<any>(null);
+  const [, setMetrics] = useState<Metrics | null>(null);
 
-  const [groupDetections, setGroupDetections] = useState<Array<{ id_grupo: number; grupo_ids: number[] }>>([]);
+  const [, setGroupDetections] = useState<Array<{ id_grupo: number; grupo_ids: number[] }>>([]);
 
-  const [historialMetricasGenerales, setHistorialMetricasGenerales] = useState<any[]>([]);
+  const [, setHistorialMetricasGenerales] = useState<Metrics[]>([]);
 
   // Estados para las barras laterales
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false); // Izquierda
@@ -56,7 +91,7 @@ export default function DashboardPage() {
   type FrameWithMetrics = { 
     blob: Blob; 
     time: number; 
-    metrics?: any; // Las métricas asociadas a este frame
+    metrics?: Metrics ; // Las métricas asociadas a este frame
     detections?: Array<{ id: number; bbox: number[] }>; // Detecciones asociadas
   };
   const [frameBuffer, setFrameBuffer] = useState<FrameWithMetrics[]>([]);
@@ -123,8 +158,8 @@ export default function DashboardPage() {
   const [gruposSeleccionados, setGruposSeleccionados] = useState<number[]>([]);
 
   // Estado temporal para almacenar las últimas métricas recibidas
-  const [latestMetrics, setLatestMetrics] = useState<any>(null);
-  const [latestDetections, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
+  const [, setLatestMetrics] = useState<Metrics | null>(null);
+  const [, setLatestDetections] = useState<Array<{ id: number; bbox: number[] }>>([]);
 
   // Estados para trayectorias
   const [trayectorias, setTrayectorias] = useState<Map<number, Array<{x: number, y: number, frameIndex: number}>>>(new Map());
@@ -133,6 +168,12 @@ export default function DashboardPage() {
   // 1) Define un estado para el live frame:
   const [liveFrame, setLiveFrame] = useState<{ bitmap: ImageBitmap; time: number } | null>(null);
 
+  const currentFrame = currentIndex >= 0 && currentIndex < frameBuffer.length 
+    ? frameBuffer[currentIndex]
+    : undefined;
+
+  const trackingData = currentFrame?.metrics?.tracking_data;
+  const groups = currentFrame?.metrics?.groups;
 
     // resolutionStreaming: límite máximo 1280x720
     // Si el usuario elige menor (p. ej. 854x480), mantén esa
@@ -164,8 +205,9 @@ export default function DashboardPage() {
       avgBlobKB = 20;    // resoluciones menores
     }
 
-    // 2. RAM aproximada reportada por el navegador (GB)
-    const reportedGB = (navigator as any).deviceMemory || 4;
+     // 3. Ahora ya puedes castearlo de forma segura:
+    const nav = navigator as NavigatorWithMemory;
+    const reportedGB: number = nav.deviceMemory ?? 4;
     // % de esa RAM que queremos dedicar al buffer
     const fraction = 0.5;  // 50%
     const budgetMB = reportedGB * 1024 * fraction;    // MB disponibles
@@ -174,7 +216,8 @@ export default function DashboardPage() {
 
     // 3. Si la API performance.memory existe, comprobamos el heap libre
     let safeFrames = theoreticalFrames;
-    const perf = (performance as any).memory;
+    const perfNav = performance as Performance & { memory?: PerformanceMemory };
+    const perf: PerformanceMemory | undefined = perfNav.memory;
     if (perf && perf.usedJSHeapSize && perf.jsHeapSizeLimit) {
       const usedMB  = perf.usedJSHeapSize  / 1024 / 1024;
       const limitMB = perf.jsHeapSizeLimit / 1024 / 1024;
@@ -258,10 +301,9 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
           setDetections(msg.detections);
           setMetrics(msg.metrics);
           
-          if (msg.selected_id == null) setSelectedId("");
 
           if (msg.metrics?.groups) {
-            const grupos = msg.metrics.groups.map((g: any) => ({
+            const grupos = msg.metrics.groups.map((g: GroupBack) => ({
               id_grupo: g.id_grupo[0],
               grupo_ids: g.grupo_ids
             }));
@@ -327,10 +369,6 @@ const { send, waitUntilReady, isConnected, isReady, connect, ws } =
 
         }
 
-        // Manejar el mensaje existente "lista_de_ids" 
-        if (msg.type === "lista_de_ids") {
-          if (msg.selected_id == null) setSelectedId("");
-        }
       }
     },
     onStopped: () => {
@@ -384,9 +422,11 @@ useEffect(() => {
       // ajusta tamaño del canvas al del bitmap
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
-      // dibuja
-      ctx.drawImage(bitmap, 0, 0);
-
+      if (zoomConfig) {
+          applyZoom(ctx, bitmap, zoomConfig);
+        } else {
+            ctx.drawImage(bitmap, 0, 0);
+        }
       dibujarTrayectorias(canvas);
 
       // limpia recursos si es posible
@@ -415,8 +455,11 @@ useEffect(() => {
   const [w, h] = resolutionStreaming.split("x").map(Number);
   canvas.width = w;
   canvas.height = h;
-
-  ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
+  if (zoomConfig ) {
+    applyZoom(ctx, liveFrame.bitmap, zoomConfig);
+  } else {
+    ctx.drawImage(liveFrame.bitmap, 0, 0, w, h);
+  }
 
   dibujarTrayectorias(canvas);
 }, [liveFrame, resolutionStreaming, wasLiveRef.current]);
@@ -568,7 +611,7 @@ useEffect(() => {
       if (fileInputRef.current) {
         fileInputRef.current.value = ""; // Clear file input
       }
-      resetId();
+      clearZoom();
     }
   };
 
@@ -630,49 +673,57 @@ useEffect(() => {
       setVideoSrc(null);
       setIsCameraActive(false);
       setSelectedDevice("");
-      setSelectedId("");
+      clearZoom();
       setStream(false);
 
     }
+    resetPlaybackState();
     setIsVideoEnded(false);
     setDetections([]);
     setIsTracking(false);
   };
 
 const downloadRecording = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/stop_recording/", {
-        method: "POST",
-      });
+  try {
+    const response = await fetch("http://localhost:8000/stop_recording/", {
+      method: "POST",
+    });
 
-      if (!response.ok) throw new Error("Fallo al detener la grabación");
+    if (!response.ok) throw new Error("Fallo al detener la grabación");
+    setIsRecording(false);
 
-      setIsRecording(false);
+    const blob = await response.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
+      now.getDate()
+    )}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(
+      now.getSeconds()
+    )}`;
+    const defaultFilename = `grabacion-${timestamp}.mp4`;
 
-      const now = new Date();
-      const pad = (n: number) => n.toString().padStart(2, "0");
-      const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-        now.getDate()
-      )}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(
-        now.getSeconds()
-      )}`;
-      const filename = `grabacion-${timestamp}.mp4`;
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{ name: "Video", extensions: ["mp4"] }],
+    });
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-    } catch (error) {
-      console.error("Error al descargar grabación:", error);
+    if (!filePath) {
+      console.log("El usuario canceló el guardado.");
+      return;
     }
-  };
+
+    await writeFile(filePath, uint8Array);
+
+
+    console.log("Archivo guardado exitosamente:", filePath);
+
+  } catch (err) {
+    console.error('Error al descargar grabación:', err);
+  }
+};
 
 
 
@@ -720,29 +771,81 @@ const downloadRecording = async () => {
     }
   };
 
-  const handleZoom = async (id: number) => {
-    setSelectedId(id.toString());
-    try {
-      await fetch("http://localhost:8000/set_id/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id }),
-      });
-    } catch (error) {
-      console.error("Error al enviar ID al backend:", error);
-    }
-  };
+const applyZoom = useCallback((
+    ctx: CanvasRenderingContext2D,
+    img: ImageBitmap,
+    cfg: { x: number; y: number; scale: number },
+  ) => {
+    const { x, y, scale } = cfg;
+    const sw = img.width / scale;
+    const sh = img.height / scale;
 
-  const resetId = async () => {
-    setSelectedId("");
-    await fetch("http://localhost:8000/clear_id/", {
-      method: "POST",
+    const sx = Math.max(0, Math.min(img.width - sw, x - sw / 2));
+    const sy = Math.max(0, Math.min(img.height - sh, y - sh / 2));
+
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  }, []);
+
+  const handleZoom = useCallback((id: number) => {
+    const dets = wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections || [];
+    const det = dets.find(d => d.id === id);
+    console.log("detecciones", det);
+    if (!det) {
+      message(`El ID ${id} ya no está en el frame actual`, {
+      title: "Error de Zoom",
     });
+      setZoomConfig(null);
+      return;
+    }
+    setSelectedId(id.toString());
+    setZoomConfig({ 
+      x: det.bbox[0] + (det.bbox[2]-det.bbox[0])/2,
+      y: det.bbox[1] + (det.bbox[3]-det.bbox[1])/2,
+      scale: 2 
+    });
+  }, [detections]);
+
+  const clearZoom = useCallback(() => {
     setSelectedId("");
-  };
-  
+    setZoomConfig(null);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    console.log(frameBuffer[currentIndex]?.detections);
+    const ids = (wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections)?.map(d => d.id.toString()) || [];
+    console.log("se va a salir",!ids.includes(selectedId));
+    if (!ids.includes(selectedId)) {
+      message(`El ID ${selectedId} ya no está en el frame actual`, {
+      title: "Error de Zoom",
+    });
+      clearZoom();
+    }
+  }, [currentIndex, frameBuffer, detections, selectedId]);
+
+
+  useEffect(() => {
+    if (!selectedId || !zoomConfig) return;
+
+    const deteccionesActuales = wasLiveRef.current
+      ? detections
+      : frameBuffer[currentIndex]?.detections;
+
+    const bbox = deteccionesActuales?.find(d => d.id.toString() === selectedId)?.bbox;
+
+    if (!bbox) return;
+
+    const [x1, y1, x2, y2] = bbox;
+    const centroX = x1 + (x2 - x1) / 2;
+    const centroY = y1 + (y2 - y1) / 2;
+
+    if (zoomConfig.x !== centroX || zoomConfig.y !== centroY) {
+      setZoomConfig((prev) => prev ? { ...prev, x: centroX, y: centroY } : null);
+    }
+  }, [detections, frameBuffer, currentIndex, selectedId, zoomConfig]);
+
   useEffect(() => {
     const sendTrackingConfig = async () => {
       if (isTracking) {
@@ -762,7 +865,7 @@ const downloadRecording = async () => {
         }
 
         // Una vez que isFirstReady es true, se envía la configuración
-        const res = await fetch("http://localhost:8000/config/", {
+        await fetch("http://localhost:8000/config/", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -848,7 +951,7 @@ const downloadRecording = async () => {
     return frameBuffer.reduce((puntos, frame, frameIndex) => {
       if (frame.metrics?.tracking_data) {
         const personData = frame.metrics.tracking_data.find(
-          (p: any) => p.id_persona === idPersona
+          (p: TrackingData) => p.id_persona === idPersona
         );
         if (personData?.centro) {
           puntos.push({
@@ -1001,17 +1104,17 @@ const downloadRecording = async () => {
       // Dibujar caja del grupo en el frame actual
       const frameMetrics = frameBuffer[currentIndex]?.metrics;
       if (frameMetrics?.groups) {
-        const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+        const grupo = frameMetrics.groups.find((g: GroupBack) => g.id_grupo[0] === idGrupo);
         if (grupo && grupo.grupo_ids.length > 0) {
-          const personas = frameMetrics.tracking_data.filter((p: any) =>
+          const personas = frameMetrics.tracking_data.filter((p: TrackingData) =>
             grupo.grupo_ids.includes(p.id_persona)
           );
           if (personas.length > 0) {
             // Calcular los límites de la caja
-            const x1 = Math.min(...personas.map((p: any) => p.bbox[0]));
-            const y1 = Math.min(...personas.map((p: any) => p.bbox[1]));
-            const x2 = Math.max(...personas.map((p: any) => p.bbox[2]));
-            const y2 = Math.max(...personas.map((p: any) => p.bbox[3]));
+            const x1 = Math.min(...personas.map((p: TrackingData) => p.bbox[0]));
+            const y1 = Math.min(...personas.map((p: TrackingData) => p.bbox[1]));
+            const x2 = Math.max(...personas.map((p: TrackingData) => p.bbox[2]));
+            const y2 = Math.max(...personas.map((p: TrackingData) => p.bbox[3]));
 
             // Dibujar la caja
             ctx.strokeStyle = "#0066ff";
@@ -1055,7 +1158,7 @@ const downloadRecording = async () => {
     const frameMetrics = frameBuffer[frameIndex]?.metrics;
     if (!frameMetrics?.groups || !frameMetrics?.directions) return "P";
 
-    const grupo = frameMetrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+    const grupo = frameMetrics.groups.find((g: GroupBack) => g.id_grupo[0] === idGrupo);
     if (!grupo || grupo.grupo_ids.length === 0) return "P";
 
     // Obtener direcciones de los miembros
@@ -1078,16 +1181,16 @@ const downloadRecording = async () => {
   const construirTrayectoriaGrupo = (idGrupo: number): Array<{x: number, y: number, frameIndex: number}> => {
     return frameBuffer.reduce((puntos, frame, frameIndex) => {
       if (frame.metrics?.groups) {
-        const grupo = frame.metrics.groups.find((g: any) => g.id_grupo[0] === idGrupo);
+        const grupo = frame.metrics.groups.find((g: GroupBack) => g.id_grupo[0] === idGrupo);
         if (grupo && grupo.grupo_ids.length > 0) {
-          const personas = frame.metrics.tracking_data.filter((p: any) =>
+          const personas = frame.metrics.tracking_data.filter((p: TrackingData) =>
             grupo.grupo_ids.includes(p.id_persona)
           );
           if (personas.length > 0) {
             // Calcular centroide (promedio de centros)
-            const centroX = personas.reduce((sum: number, p: any) => 
+            const centroX = personas.reduce((sum: number, p: TrackingData) => 
               sum + p.centro[0], 0) / personas.length;
-            const centroY = personas.reduce((sum: number, p: any) => 
+            const centroY = personas.reduce((sum: number, p: TrackingData) => 
               sum + p.centro[1], 0) / personas.length;
             
             puntos.push({ x: centroX, y: centroY, frameIndex });
@@ -1136,18 +1239,32 @@ const downloadRecording = async () => {
           <details className={styles.zoomDropdown}>
             <summary>Seleccion Zoom</summary>
             <div className={styles.zoomScrollContainer}>
-              {!isStopping && selectedId !== "" && (
-                <button onClick={resetId}>Quitar Zoom</button>
-              )}
-              {!isStopping && (
+              {selectedId && (
                 <>
-                  {detections.map((det) => (
-                    <button key={det.id} onClick={() => handleZoom(det.id)}>
-                      Zoom al ID {det.id}
-                    </button>
-                  ))}
+                  <button onClick={clearZoom}>Quitar Zoom</button>
+                  <label>
+                    Zoom: {zoomConfig?.scale.toFixed(1)}×
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={0.1}
+                      value={zoomConfig?.scale || 1}
+                      onChange={(e) => {
+                        const scale = parseFloat(e.target.value);
+                        setZoomConfig((cfg) => cfg ? { ...cfg, scale } : null);
+                      }}
+                    />
+                  </label>
                 </>
               )}
+              {(wasLiveRef.current ? detections : frameBuffer[currentIndex]?.detections || []) // fallback
+                .filter(det => det && typeof det.id !== "undefined")
+                .map(det => (
+                  <button key={det.id} onClick={() => handleZoom(det.id)}>
+                    Zoom al ID {det.id}
+                  </button>
+              ))}
             </div>
           </details>
 
@@ -1463,7 +1580,7 @@ const downloadRecording = async () => {
               {activeSection === "generales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                    {!isStopping && Array.isArray(trackingData) && trackingData.length > 0 ? (
                       <div className={styles.tableContainer}>
                         <table className={styles.tableMetricas}>
                           <thead>
@@ -1477,7 +1594,7 @@ const downloadRecording = async () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((person: any, i: number) => (
+                            {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((person: TrackingData, i: number) => (
                               <tr key={`${frameBuffer[currentIndex]?.metrics?.frame_number}-${i}`}>
                                 <td>{person.id_persona}</td>
                                 <td>{frameBuffer[currentIndex]?.metrics?.frame_number}</td>
@@ -1503,9 +1620,9 @@ const downloadRecording = async () => {
               {activeSection === "individuales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.tracking_data?.length > 0 ? (
+                    {!isStopping && isTracking && Array.isArray(trackingData) && trackingData.length > 0 ? (
                       <div className={styles.individualMetricsGrid}>
-                        {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((personData: any) => {
+                        {frameBuffer[currentIndex]?.metrics?.tracking_data?.map((personData: TrackingData) => {
                           // Función para obtener el símbolo de dirección
                           const getDirectionSymbol = (directionCode: string) => {
                             const directionMap: { [key: string]: string } = {
@@ -1617,9 +1734,9 @@ const downloadRecording = async () => {
               {activeSection === "grupales" && (
                 <div className={styles.fullWidthMetricSection}>
                   <div className={styles.metricContentFull}>
-                    {!isStopping && isTracking && frameBuffer[currentIndex]?.metrics?.groups?.length > 0 ? (
+                    {!isStopping && isTracking && Array.isArray(groups) && groups.length > 0 ? (
                       <div className={styles.groupMetricsGrid}>
-                        {frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: any, index: number) => (
+                        {frameBuffer[currentIndex]?.metrics?.groups?.map((grupo: GroupBack, index: number) => (
                           <div 
                             key={`grupo-${index}`}
                             className={`${styles.metricCard} ${grupoSeleccionado === index ? styles.selectedCard : ""}`}
@@ -1660,7 +1777,7 @@ const downloadRecording = async () => {
                                 <div className={styles.expandedGroupDetails}>
                                   {grupo.grupo_ids.map((personId: number) => {
                                     const personData = frameBuffer[currentIndex]?.metrics?.tracking_data?.find(
-                                      (p: any) => p.id_persona === personId
+                                      (p: TrackingData) => p.id_persona === personId
                                     );
                                     const getDirectionSymbol = (directionCode: string) => {
                                       const directionMap: { [key: string]: string } = {

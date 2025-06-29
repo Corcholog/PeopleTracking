@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { message } from "@tauri-apps/plugin-dialog";
 
 interface UseWebSocketOptions {
   url: string;
@@ -56,13 +57,22 @@ export function useWebSocket({ url, onMessage, onStopped}: UseWebSocketOptions) 
       console.log("🔒 WebSocket cerrado");
       setIsConnected(false);
       setIsReady(false);
+      message("Se cerro el webSocket.", {
+        title: "Fin Tracking",
+      });
+      onStopped?.();         // — y también aquí
+
     };
 
     ws.onerror = (err) => {
       console.error("⚠️ WebSocket error:", err);
+      message("Ha ocurrido un error en el WebSocket.", {
+        title: "Error de Conexión",
+      });
+      onStopped?.();         // — opcionalmente, antes de cerrar
       ws.close();
     };
-  }, [url, onMessage]);
+  }, [url, onMessage,onStopped]);
 
   // En este caso no queremos conectar automáticamente al montar
   useEffect(() => {

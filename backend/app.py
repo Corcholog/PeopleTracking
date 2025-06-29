@@ -454,7 +454,7 @@ async def analyze(ws: WebSocket):
             loop = asyncio.get_running_loop()
             try:
                 frame_pred, tracks, center = await loop.run_in_executor(
-                    executor, get_predict, frame, current_id
+                    executor, get_predict, frame
                 )
             except Exception as e:
                 print("❌ Error en get_predict:", e)
